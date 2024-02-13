@@ -1,0 +1,20 @@
+FROM ubuntu:22.04
+
+SHELL ["/bin/bash", "-c"]
+
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
+
+# install dependencies 
+COPY base-packages.sh ./
+RUN chmod +x base-packages.sh ; sync && ./base-packages.sh
+
+ARG WORK_DIR
+ARG HOME_DIR
+
+WORKDIR $WORK_DIR
+ENV HOME=$HOME_DIR
+# Where pytorch will save parameters from pretrained networks
+ENV XDG_CACHE_HOME=${WORK_DIR}/tmp
+

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "python_project_template"
+version = "0.0.0"
+authors = [
+    {name = "Arturas Aleksandraus", email = "arturas@aleksandraus.se"},
+]
+
+description = "Template for ML experiments"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["ML", "PyTorch", "TTD", "research"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["environment/requirements.txt"]}
+
+[project.scripts]
+hello = "project.helloworld:main"
+
+[tool.setuptools]
+packages = ["project"]
+
