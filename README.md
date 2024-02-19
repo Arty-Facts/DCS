@@ -1,5 +1,11 @@
 # DCS Data-Centric Sampling
-
+```
+final comparison:
+3 ResNet18BN acc = 78.29 +- 0.71 all = [0.7923, 0.775, 0.7813] |GAN evalute
+3 ResNet18BN acc = 84.08 +- 0.46 all = [0.8432, 0.8449, 0.8344] |GAN_Inversion evalute
+3 ResNet18BN acc = 86.03 +- 0.07 all = [0.8603, 0.8612, 0.8595] |ITGAN evalute
+3 ResNet18BN acc = 86.27 +- 0.09 all = [0.8636, 0.863, 0.8614] |real evalute
+```
 
 ## Setup host system (Not needed if using docker)
 ```
