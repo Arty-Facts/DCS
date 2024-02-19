@@ -1,3 +1,4 @@
+imagecodecs
 ipykernel
 ipympl
 ipywidgets
@@ -5,8 +6,21 @@ jupyter
 matplotlib
 notebook
 numpy
+openmim
 optuna
 optuna-dashboard
+pymysql
+requests
+scikit-image
+scikit-learn
+scipy
+seaborn
+tensorboard
+timm
 torch
+torch-tb-profiler
+torchdiffeq 
+torchsummary
 torchvision
 tox
+xformers

@@ -4,17 +4,17 @@ build-backend = "setuptools.build_meta"
 
 
 [project]
-name = "python_project_template"
+name = "DCS"
 version = "0.0.0"
 authors = [
     {name = "Arturas Aleksandraus", email = "arturas@aleksandraus.se"},
 ]
 
-description = "Template for ML experiments"
+description = "Data-Centric Sampling for Deep Learning"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-keywords = ["ML", "PyTorch", "TTD", "research"]
+keywords = ["ML", "PyTorch", "research"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

@@ -1,27 +1,4 @@
-[![GitHub Actions Status](https://github.com/Arty-Facts/python_docker_template/actions/workflows/python-package-test.yml/badge.svg)](https://github.com/Arty-Facts/python_docker_template/actions/workflows/python-package-test.yml/badge.svg)
-
-# Docker project template
-
-## How to use the template
-
-### For empty project
-```
-git clone https://github.com/Arty-Facts/python_docker_template.git
-
-git remote remove origin
-
-git remote add origin <new remote>
-
-git push --set-upstream origin main
-```
-
-### For active project 
-```
-git clone https://github.com/Arty-Facts/python_docker_template.git
-cd python_docker_template
-mv -r $(ls  --ignore=.git ) .. ; cd ..
-rm rf python_docker_template
-```
+# DCS Data-Centric Sampling
 
 
 ## Setup host system (Not needed if using docker)
@@ -99,3 +76,11 @@ Python dependencies for the project should be added to the environment/requireme
 ```
 tox
 ```
+
+# Taken from 
+## Synthesizing Informative Training Samples with GAN [[PDF]](https://arxiv.org/pdf/2204.07513.pdf)
+
+The experiment data have been released in [Google Drive](https://drive.google.com/drive/folders/1qyxK4XxboBRuQVwesxQTSx-Vpcp1fCeS?usp=sharing).
+The released data include: [1] pretrained BigGAN Generators; [2] GAN Inversion learned latent vectors (z); [3] IT-GAN learned latent vectors (z). 
+
+We also provide some raw training codes which have been neither re-organized nor validated. Just for reference. The raw training code is [here](https://drive.google.com/drive/folders/1vENTbqDdt6f0K2fQpuUfuCEnj_09Bqeh?usp=sharing). Replace md_utils.py with utils.py, md_networks.py with networks.py if applicable. 
