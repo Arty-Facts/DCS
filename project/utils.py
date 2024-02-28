@@ -135,13 +135,12 @@ def load_generator(generator, config, weight_path):
     else:
         raise ValueError(f'Invalid generator: {generator}')
     return model, mean, std
+
 def diff_stack(batch):
-    # Example collate function that stacks tensors from a batch
-    # Assuming each element in batch is a tuple (data_tensor, target_tensor)
     data_tensors = [item[0] for item in batch]
     target_tensors = [item[1] for item in batch]
 
-    # Stack data tensors and target tensors separately
+    # Stack data tensors and target tensors separately to allow gradient computation
     data = torch.stack(data_tensors)
     targets = torch.stack(target_tensors)
     return data, targets
@@ -302,6 +301,7 @@ def rand_crop(x, param):
         torch.arange(x.size(0), dtype=torch.long, device=x.device),
         torch.arange(x.size(2), dtype=torch.long, device=x.device),
         torch.arange(x.size(3), dtype=torch.long, device=x.device),
+        indexing='ij'
     )
     grid_x = torch.clamp(grid_x + translation_x + 1, 0, x.size(2) + 1)
     grid_y = torch.clamp(grid_y + translation_y + 1, 0, x.size(3) + 1)
@@ -324,6 +324,7 @@ def rand_cutout(x, param):
         torch.arange(x.size(0), dtype=torch.long, device=x.device),
         torch.arange(cutout_size[0], dtype=torch.long, device=x.device),
         torch.arange(cutout_size[1], dtype=torch.long, device=x.device),
+        indexing='ij'
     )
     grid_x = torch.clamp(grid_x + offset_x - cutout_size[0] // 2, min=0, max=x.size(2) - 1)
     grid_y = torch.clamp(grid_y + offset_y - cutout_size[1] // 2, min=0, max=x.size(3) - 1)
