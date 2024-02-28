@@ -251,8 +251,8 @@ class Generator(nn.Module):
                     print('Init style not recognized...')
                 self.param_count += sum([p.data.nelement()
                                          for p in module.parameters()])
-        print('Param count for G''s initialized parameters: %d' %
-              self.param_count)
+        # print('Param count for G''s initialized parameters: %d' %
+        #       self.param_count)
 
     # Note on this forward function: we pass in a y vector which has
     # already been passed through G.shared to enable easy class-wise

@@ -8,14 +8,15 @@ from utils import get_dataset, get_network, DiffAugment, ParamDiffAug, epoch, ge
 import BigGAN
 from copy import deepcopy
 import pathlib
+from project.models.TIMM import TimmModel
 
 def main():
     parser = argparse.ArgumentParser(description='Parameter Processing')
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
     parser.add_argument('--model_eval', type=str, default='ResNet18BN', help='model')
     parser.add_argument('--exp', type=int, default=0, help='exp')
-    parser.add_argument('--Epoch_evaltrain', type=int, default=200, help='epochs to train a network')
-    parser.add_argument('--num_evalnet', type=int, default=3, help='train a number of networks per experiment')
+    parser.add_argument('--Epoch_evaltrain', type=int, default=10, help='epochs to train a network')
+    parser.add_argument('--num_evalnet', type=int, default=1, help='train a number of networks per experiment')
     parser.add_argument('--lr_net', type=float, default=0.01, help='learning rate')
     parser.add_argument('--batch_train_net', type=int, default=256, help='batch size for training networks')
     parser.add_argument('--mode', type=str, default='', help='train mode')
@@ -104,6 +105,7 @@ def main():
                          BN_eps=1e-5, SN_eps=1e-08, G_mixed_precision=False, G_fp16=False,
                          G_init='N02', skip_init=False, no_optim=False,
                          G_param='SN', norm_style='bn').to(device)
+
     G.load_state_dict(torch.load(weight_path, map_location=device), strict=True)
     G.eval()  # Train? My conclusion is that .eval() is good for pretrained weights and mean/std, but .train() is good for random weights.
     # G.train()
@@ -170,7 +172,12 @@ def main():
 
     ''' evaluate '''
     if args.mode == '':
-        mode_all = ['GAN', 'GAN_Inversion', 'ITGAN', 'real']#, 'EfficientGAN']
+        mode_all = [
+            'ITGAN', 
+            'GAN_Inversion', 
+            'GAN', 
+            'real',
+            ]#, 'EfficientGAN']
     else:
         mode_all = [args.mode]
 
@@ -192,10 +199,10 @@ def main():
 
         elif mode == 'GAN_Inversion':
             ''' load GAN inversion z '''
-            fpath = os.path.join(checkpoint_path, 'GANInversion_final_%s_ConvNet_lrz0.100_exp%d.pt' % (args.dataset, exp)) #Todo: modify path
+            fpath = os.path.join(checkpoint_path, 'GAN_Inversion_%s_exp%d.pt' % (args.dataset, exp)) #Todo: modify path
             print('use GAN inversion vectors: %s' % fpath)
             data_z = torch.load(fpath, map_location=device)
-            z_inverse_all = deepcopy(data_z['z_inverse_all']).detach()
+            z_inverse_all = torch.from_numpy(data_z['anchors']).to(device)
 
             images_inv_all = []
             for i in range(int(np.ceil(num_train/args.batch_train_net))):
@@ -210,15 +217,15 @@ def main():
                 return img.detach(), lab.detach()
         elif mode == 'ITGAN':
             ''' load ITGAN z '''
-            fpath = os.path.join(checkpoint_path, 'ITGAN_final_%s_ConvNet_lrz0.001_exp%d.pt' % (args.dataset, exp))
+            fpath = os.path.join(checkpoint_path, 'ITGAN_%s_exp%d.pt' % (args.dataset, exp))
             print('use ITGAN vectors: %s' % fpath)
             data_z = torch.load(fpath, map_location=device)
-            z_all = deepcopy(data_z['z_eff_all']).detach()
+            z_all = torch.from_numpy(data_z['anchors']).to(device)
 
             images_all = []
             for i in range(int(np.ceil(num_train/args.batch_train_net))):
                 idx = np.arange(i*args.batch_train_net, min((i+1)*args.batch_train_net, num_train))
-                images_all.append(generate(z_all[idx], labels_all[idx]).detach())
+                images_all.append(generate(z_all[idx], labels_all[idx]))
             images_all = torch.cat(images_all, dim=0)
             print('generate images_all shape:', images_all.shape)
             def load_batch(idx):
@@ -264,7 +271,8 @@ def main():
 
             # random for test
             # net = get_network(args.model_eval, channel, num_classes, args.width_net, args.depth_net, args.act, args.normlayer, args.pooling, shape_img)
-            net = get_network(args.model_eval, channel, num_classes, shape_img)
+            # net = get_network(args.model_eval, channel, num_classes, shape_img)
+            net = TimmModel("resnet18.a1_in1k", num_classes, pretrained=True).to(device)
 
             criterion = nn.CrossEntropyLoss().to(device)
             optimizer_net = torch.optim.SGD(net.parameters(), lr=args.lr_net, momentum=0.9, weight_decay=0.0005)  # no cuda version
