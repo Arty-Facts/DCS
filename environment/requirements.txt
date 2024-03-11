@@ -1,4 +1,7 @@
+
 albumentations
+cryptography
+docker
 imagecodecs
 ipykernel
 ipympl
@@ -7,6 +10,7 @@ jupyter
 matplotlib
 notebook
 numpy
+nvidia-ml-py3
 openmim
 optuna
 optuna-dashboard
@@ -25,3 +29,5 @@ torchsummary
 torchvision
 tox
 xformers
+umap-learn
+minisom

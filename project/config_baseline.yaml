@@ -1,0 +1,38 @@
+id: 0
+name: DCS_Basic
+# ==== data ====
+root_path: H:/arty/data/IT-GAN
+data_path: data
+checkpoint_path: checkpoints
+generator_path: G_Pretrained
+dataset: CIFAR10
+mode$: [
+  ITGAN,
+  Real, 
+  GAN_Inversion,
+  Random,
+] 
+anchors_path: Base
+exp: 0
+# ==== training ====
+batch_size: 256
+num_workers: 0
+num_epochs: 100
+lr@: [float, 0.0001, 0.1, log]
+# lr: 0.01
+weight_decay@: [float, 0.000001, 0.1, log]
+# weight_decay: 0.00005
+model_name: resnet18.a1_in1k
+drop_rate: 0.1
+pretrained: False
+augmentations: color_crop_cutout_flip_scale_rotate
+shuffle: True
+unfreeze_after: 0.2
+# ==== compute ====
+device: cuda
+nodes: [0]
+jobs_per_node: 1
+iterations: 2
+# ==== optuna ====
+trials: 100
+db: mysql+pymysql://root:root@172.16.1.129/dcs

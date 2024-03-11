@@ -22,8 +22,12 @@ class TimmModel(nn.Module):
         x = self.head(x)
         return x
     
-    def features(self, x):
+    def encode(self, x):
         x = self.encoder(x)
+        return x
+    
+    def classify(self, x):
+        x = self.head(x)
         return x
     
     def encoder_grad(self, mode=True):

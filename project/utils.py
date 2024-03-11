@@ -2,8 +2,152 @@ import torch
 import numpy as np
 import torchvision.datasets as datasets
 import torch.nn.functional as F
+import torchvision.transforms as transforms
+import torchvision
+import time
+import multiprocessing as mp
+import random
+import optuna
+import tqdm
+
+class dummy:
+    @staticmethod
+    def is_alive():
+        return False
+    @staticmethod
+    def close():
+        pass
+    @staticmethod
+    def terminate():
+        pass
+    @staticmethod
+    def join():
+        pass
+    @staticmethod
+    def kill():
+        pass
+
+class Worker:
+    def __init__(self, id, node):
+        self.id = id
+        self.node = node
+        self.process = dummy
+        self.start_time = time.perf_counter()
 
 
+def parallelize(func, jobs, gpu_nodes, verbose=True, timeout=60*60*24):
+    if verbose:
+        print(f'Launching {len(jobs)} jobs on {len(set(gpu_nodes))} GPUs. {len(gpu_nodes)//len(set(gpu_nodes))} jobs per GPU in parallel..')
+    workers = [Worker(id, node) for id, node in enumerate(gpu_nodes)]
+    while len(jobs) > 0:
+        random.shuffle(workers)
+        for worker in workers:
+            if time.perf_counter() - worker.start_time > timeout:
+                if verbose:
+                    print(f'Job on cuda:{worker.node} in slot {worker.id} timed out. Killing it...')
+                worker.process.terminate()
+            if not worker.process.is_alive():
+                worker.process.kill()
+                if verbose:
+                    print(f'Launching job on cuda:{worker.node} in slot {worker.id}. {len(jobs)} jobs to left...')
+                if len(jobs) == 0:
+                    break
+                args = list(jobs.pop())
+                args.append(f'cuda:{worker.node}')
+                p = mp.Process(target=func, args=args)
+                p.start()
+                worker.process = p
+                worker.start_time = time.perf_counter()
+                time.sleep(1)
+        time.sleep(1)
+    for worker in workers:
+        worker.process.join()
+    if verbose:
+        print('Done!')
+
+
+def ask_tell_optuna(objective_func, study_name, storage_name, device):
+    study = optuna.create_study(directions=['maximize'], study_name=study_name, storage=storage_name, load_if_exists=True)
+    trial = study.ask()
+    res = objective_func(trial, device)
+    study.tell(trial, res)
+
+
+def get_opuna_value(name, opt_values, trial):
+    data_type,*values = opt_values
+    if data_type == "int":
+        min_value, max_value, step_scale = values
+        if step_scale == "log":
+            return trial.suggest_int(name, min_value, max_value, log=True)
+        elif step_scale.startswith("uniform_"):
+            step = int(step_scale.split("_")[1])
+            return trial.suggest_int(name, min_value, max_value, step=step)
+        else:
+            return trial.suggest_int(name, min_value, max_value)
+    elif data_type == "float":
+        min_value, max_value, step_scale = values
+        if step_scale == "log":
+            return trial.suggest_float(name, min_value, max_value, log=True)
+        elif step_scale.startswith("uniform_"):
+            step = float(step_scale.split("_")[1])
+            return trial.suggest_float(name, min_value, max_value, step=step)
+        else:
+            return trial.suggest_float(name, min_value, max_value)
+    elif data_type == "categorical":
+        return trial.suggest_categorical(name, values[0])
+    else:
+        raise ValueError(f"Unknown data type {data_type}")
+    
+def str_to_torch(name, value):
+    return value
+
+def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, aug=None, verbose=False):
+    loss_sum = 0
+    train_acc = 0
+    model.train()
+    if verbose:
+        data_iter = tqdm.tqdm(loader, desc='train')
+    else:
+        data_iter = loader
+    for x, y, i in data_iter:
+        if aug is not None:
+            x = aug(x)
+        optimizer.zero_grad()
+        # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        y_hat = model(x)
+        loss = criterion(y_hat, y)
+        train_acc += (y_hat.argmax(-1) == y).float().sum().item()
+        loss_sum += loss.item()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
+        if lr_scheduler is not None:
+            lr_scheduler.step()
+    train_acc /= len(loader.dataset)
+    loss_sum /= len(loader)
+    return train_acc,  loss_sum
+
+def test(model, loader, criterion, verbose=False):
+    loss_sum = 0
+    test_acc = 0
+    model.eval()
+    if verbose:
+        data_iter = tqdm.tqdm(loader, desc='test')
+    else:
+        data_iter = loader
+    with torch.no_grad():
+        for x, y, i in data_iter:
+            y_hat = model(x)
+            loss = criterion(y_hat, y)
+            test_acc += (y_hat.argmax(-1) == y).float().sum().item()
+            loss_sum += loss.item()
+    test_acc /= len(loader.dataset)
+    loss_sum /= len(loader)
+    return test_acc, loss_sum
 
 def renormalize(img, mean, std):
     mean = mean.view(1, -1, 1, 1).to(img.device)
@@ -22,14 +166,27 @@ def generate(model, z, lab, mean, std):
         return renormalize(model(z, lab), mean, std)
 
 def get_label(dataset):
-    if isinstance(dataset, (datasets.MNIST, datasets.FashionMNIST, datasets.SVHN, datasets.CIFAR10, datasets.CIFAR100)):
+    if isinstance(dataset, (datasets.MNIST, datasets.FashionMNIST, datasets.CIFAR10, datasets.CIFAR100)):
         return torch.tensor(dataset.targets)
     elif isinstance(dataset, datasets.SVHN):
         return torch.tensor(dataset.labels)
     else:
         raise ValueError(f'Invalid dataset: {dataset}')
 
-def get_dataset(dataset, data_path, transform):
+class IndexDataset():
+    def __init__(self, dataset):
+        self.dataset = dataset
+    def __setattr__(self, __name: str, __value: torch.Any) -> None:
+        if 'dataset' in self.__dict__:
+            setattr(self.dataset, __name, __value)
+        elif __name == 'dataset':
+            self.__dict__[__name] = __value
+    def __getitem__(self, index):
+        return *self.dataset[index], index
+    def __len__(self):
+        return len(self.dataset)
+
+def get_dataset(dataset, data_path, transform=None):
     if dataset == 'MNIST':
         channel = 1
         im_size = (28, 28)
@@ -69,15 +226,16 @@ def get_dataset(dataset, data_path, transform):
         class_names = dst_train.classes
     else:
         raise ValueError(f'Invalid dataset: {dataset}')
-    
+    dst_test = IndexDataset(dst_test)
+    dst_train = IndexDataset(dst_train)
     return {
         'channel': channel,
         'im_size': im_size,
         'num_classes': num_classes,
         'train': dst_train,
         'test': dst_test,
-        'label_train': get_label(dst_train),
-        'label_test': get_label(dst_test),
+        'label_train': get_label(dst_train.dataset),
+        'label_test': get_label(dst_test.dataset),
         'class_names': class_names
     }
 
@@ -139,17 +297,38 @@ def load_generator(generator, config, weight_path):
 def diff_stack(batch):
     data_tensors = [item[0] for item in batch]
     target_tensors = [item[1] for item in batch]
+    index_tensors = [item[2] for item in batch]
 
     # Stack data tensors and target tensors separately to allow gradient computation
     data = torch.stack(data_tensors)
     targets = torch.stack(target_tensors)
-    return data, targets
+    index = torch.stack(index_tensors)
+    return data, targets, index
+
+def set_transforms(model, mode, loader, eval, pretrained=True):
+    if pretrained:
+        if eval is not None:
+            eval.set_transform(model.transform)
+        if mode == 'Real':
+            loader.set_transform(torchvision.transforms.Compose(model.transform.transforms))
+        else:
+            loader.set_transform(torchvision.transforms.Compose([t for t in model.transform.transforms if not isinstance(t, transforms.ToTensor)])) 
+    else:
+        if eval is not None:
+            eval.set_transform(torchvision.transforms.Compose([transforms.ToTensor()] + [t for t in model.transform.transforms if isinstance(t, transforms.Normalize)]))
+        if mode == 'Real':
+            loader.set_transform(torchvision.transforms.Compose([transforms.ToTensor()] + [t for t in model.transform.transforms if isinstance(t, transforms.Normalize)]))
+        else:
+            loader.set_transform(torchvision.transforms.Compose([t for t in model.transform.transforms if isinstance(t, transforms.Normalize)]))
+            # loader.set_transform(None)
 
 class GeneratorDatasetLoader():
-    def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cuda"):
-        self.labels = labels
+    def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cuda", use_cache=True, generator_grad=True):
+        self.labels = labels.long()
         self.anchors = anchors
-        self.dataset = torch.utils.data.TensorDataset(self.anchors, labels)
+        self.generator_name = generator
+        self.config = config
+        self.dataset = torch.utils.data.TensorDataset(self.anchors, self.labels, torch.arange(len(self.labels)))
         self.generator, self.mean, self.std = load_generator(generator, config, weight_path)
         self.mean = self.mean
         self.std = self.std
@@ -161,25 +340,52 @@ class GeneratorDatasetLoader():
         self.loader = torch.utils.data.DataLoader(self.dataset, batch_size=self.batch_size, shuffle=self.shuffle, num_workers=self.num_workers, collate_fn=diff_stack)
         self.transform = None
         self.generator.eval()
+        self.use_cache = use_cache
+
+        if self.use_cache:
+            self.generator.requires_grad_(False)
+            print('Caching generator outputs...')
+            self.generator.to(self.device)
+            self.cache = [None for _ in range(len(self.labels))]
+            for batch in self.loader:
+                data, label, index = batch
+                data = data.to(self.device)
+                label = label.to(self.device)
+                imgs = generate(self.generator, data, label, self.mean, self.std)
+                for i, img in zip(index, imgs):
+                    self.cache[i] = img
+            self.cache = torch.stack(self.cache, dim=0)
+            self.generator.to('cpu')
+            print('Done!')
+        self.generator.requires_grad_(generator_grad)
 
     def __iter__(self):
-        self.generator.to(self.device)
+        if not self.use_cache:
+            self.generator.to(self.device)
         for batch in self.loader:
-            data, label = batch
-            data = data.to(self.device)
+            data, label, index = batch
             label = label.to(self.device)
-            imgs = generate(self.generator, data, label, self.mean, self.std)
+            if self.use_cache:
+                imgs = self.cache[index]
+            else:
+                data = data.to(self.device)
+                imgs = generate(self.generator, data, label, self.mean, self.std)
+        
             # imgs = self.generator(data, label)
             if self.transform:
                 imgs = torch.stack([self.transform(img) for img in imgs])
-            yield imgs, label.long()
-        self.generator.to('cpu')
+            yield imgs, label, index
+        if not self.use_cache:
+            self.generator.to('cpu')
     
     def __len__(self):
         return len(self.loader)
     
     def set_transform(self, transform):
         self.transform = transform
+
+    def reset(self):
+        self.anchors.data = self.original_anchors.data.clone()
 
 
 class DeviceDataLoader():
@@ -193,10 +399,10 @@ class DeviceDataLoader():
 
     def __iter__(self):
         for batch in self.loader:
-            data, label = batch
+            data, label, index = batch
             data = data.to(self.device)
             label = label.to(self.device)
-            yield data, label
+            yield data, label, index
         
     def __len__(self):
         return len(self.loader)
@@ -212,6 +418,16 @@ def load_anchors(data_path):
     generator = data['generator']
     config = data['config']
     return anchors, labels, generator, config
+
+def get_generator(anchors_path, weight_path, shuffle=True, num_workers=0, batch_size=64, device="cuda"):
+    anchors_data = load_anchors(anchors_path)
+    return GeneratorDatasetLoader(*anchors_data, weight_path, shuffle=shuffle, num_workers=num_workers, batch_size=batch_size,  device=device)
+
+def generator_path(generator_path, dataset, exp):
+    return f'{generator_path}_{dataset}_exp{exp}.pth'
+
+def anchor_path(anchor_path, mode, dataset, exp):
+    return f'{anchor_path}_{mode}_{dataset}_exp{exp}.pt'
 
 def rand_scale(x, param):
     # x>1, max scale
@@ -237,7 +453,7 @@ def rand_rotate(x, param): # [-180, 180], 90: anticlockwise 90 degree
     theta = (torch.rand(x.shape[0]) - 0.5) * 2 * ratio / 180 * float(np.pi)
     theta = [[[torch.cos(theta[i]), torch.sin(-theta[i]), 0],
         [torch.sin(theta[i]), torch.cos(theta[i]),  0],]  for i in range(x.shape[0])]
-    theta = torch.tensor(theta, dtype=torch.float)
+    theta = torch.tensor(theta, dtype=torch.float, device=x.device)
     if param.Siamese: # Siamese augmentation:
         theta[:] = theta[0]
     grid = F.affine_grid(theta, x.shape, align_corners=False).to(x.device)

@@ -29,7 +29,8 @@ dynamic = ["dependencies"]
 dependencies = {file = ["environment/requirements.txt"]}
 
 [project.scripts]
-hello = "project.helloworld:main"
+tb = "project.train_baseline:train_baseline"
+tbo = "project.train_baseline:train_optuna"
 
 [tool.setuptools]
 packages = ["project"]
