@@ -6,7 +6,7 @@ import torch.nn as nn
 import argparse
 from utils import get_dataset, get_network, DiffAugment, ParamDiffAug, epoch, get_time, save_image_tensor, distance_wb, match_loss, get_pretrained_networks
 from torch.optim.lr_scheduler import CosineAnnealingLR
-import BigGAN
+import project.BigGAN as BigGAN
 from copy import deepcopy
 
 def main():

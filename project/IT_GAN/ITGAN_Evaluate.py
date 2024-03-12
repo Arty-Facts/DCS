@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import argparse
 from utils import get_dataset, get_network, DiffAugment, ParamDiffAug, epoch, get_time
-import BigGAN
+import project.BigGAN as BigGAN
 from copy import deepcopy
 import pathlib
 from project.models.TIMM import TimmModel
