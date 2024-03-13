@@ -28,6 +28,6 @@ torchdiffeq
 torchsummary
 torchvision
 tox
-xformers
+# xformers
 umap-learn
 minisom

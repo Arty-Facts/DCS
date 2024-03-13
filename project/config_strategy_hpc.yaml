@@ -1,23 +1,35 @@
 id: 0
-name: DCS_Basic
+name: DCS_S_10
 # ==== data ====
-root_path: H:/arty/data/IT-GAN
+root_path: /mnt/data/arty/data/IT-GAN
 data_path: data
 checkpoint_path: checkpoints
 generator_path: G_Pretrained
 dataset: CIFAR10
 mode$: [
   ITGAN,
-  Real, 
   GAN_Inversion,
   Random,
 ] 
+strategy$: 
+  - name: Static
+    args: {}
+  - name: EilertsenEscape 
+    args:
+      lr@: [float, 0.0001, 10, log]
+      weight_decay@: [float, 0.000001, 0.1, log]
+      reset_every@: [int, 1, 10, uniform_1]
+  - name: LPInversion
+    args:
+      lr@: [float, 0.0001, 10, log]
+      weight_decay@: [float, 0.000001, 0.1, log]
+      alpha@: [float, 0.0, 1, uniform]
 anchors_path: Base
 exp: 0
 # ==== training ====
 batch_size: 256
 num_workers: 0
-num_epochs: 100
+num_epochs: 10
 lr@: [float, 0.0001, 0.1, log]
 # lr: 0.01
 weight_decay@: [float, 0.000001, 0.1, log]
@@ -30,7 +42,7 @@ shuffle: True
 unfreeze_after: 0.2
 # ==== compute ====
 verbose: True
-save: True
+save: False
 device: cuda
 nodes: [0]
 jobs_per_node: 1

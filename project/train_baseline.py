@@ -39,6 +39,8 @@ def train_strategy_conf(conf):
     experiment = conf['name']
     id = conf['id']
     strategy_name = conf['strategy']['name']
+    save = conf['save']
+    verbose = conf['verbose']
 
     aug = functools.partial(aug_lib.diff_augment, strategy=augmentations, param=aug_lib.ParamDiffAug())
     # Load the dataset
@@ -87,7 +89,10 @@ def train_strategy_conf(conf):
     train_losses = []
     test_losses = []
     best_model = None
-    epoch_iter = tqdm.trange(num_epochs, desc=mode)
+    if verbose:
+        epoch_iter = tqdm.trange(num_epochs, desc=mode)
+    else:
+        epoch_iter = range(num_epochs)
     test_acc = 0
     for epoch in epoch_iter:
 
@@ -95,35 +100,38 @@ def train_strategy_conf(conf):
 
         if epoch == int(num_epochs*unfreeze_after) and pretrained:
             model.encoder_grad(True)
-        epoch_iter.set_description(f"{mode} - training")
+        if verbose:
+            epoch_iter.set_description(f"{mode} - training")
         train_acc, train_loss = utils.train(model, generator, optimizer, criterion, aug=aug)
         train_accs.append(train_acc)
         train_losses.append(train_loss)
-
-        epoch_iter.set_description(f"{mode} - evaluating")
+        if verbose:
+            epoch_iter.set_description(f"{mode} - evaluating")
         test_acc_tmp, test_loss = utils.test(model, eval_data, criterion)
         test_accs.append(test_acc_tmp)
         test_losses.append(test_loss)
         if test_acc_tmp > test_acc:
             best_model = model.state_dict()
         test_acc=test_acc_tmp
-    epoch_iter.set_description(f"{mode} - Done")
-    epoch_iter.set_postfix(test_acc=f"{test_acc*100:.1f}%", train_acc=f"{train_acc*100:.1f}%", train_loss=f"{train_loss:.4f}", test_loss=f"{test_loss:.4f}")
-    model_path = checkpoint_path / f"{dataset}/{model.name}/pretrained_{pretrained}/{experiment}/{mode}_{strategy_name}_exp{exp}_acc{int(max(test_accs)*1000)}_id{id}.pth"
-    model_path.parent.mkdir(parents=True, exist_ok=True)
+    if verbose:
+        epoch_iter.set_description(f"{mode} - Done")
+        epoch_iter.set_postfix(test_acc=f"{test_acc*100:.1f}%", train_acc=f"{train_acc*100:.1f}%", train_loss=f"{train_loss:.4f}", test_loss=f"{test_loss:.4f}")
     result = {
         "test_acc" : test_accs,
         "train_acc" : train_accs,
     }
-    torch.save({
-        "latest_state_dict": model.state_dict(),
-        "best_state_dict": best_model,
-        "anchors": generator.anchors.detach().clone().cpu(),
-        "labels": generator.labels.detach().clone().cpu(),
-        **conf,
-        **result
-    }, 
-    model_path)
+    if save:
+        model_path = checkpoint_path / f"{dataset}/{model.name}/pretrained_{pretrained}/{experiment}/{mode}_{strategy_name}_exp{exp}_acc{int(max(test_accs)*1000)}_id{id}.pth"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            "latest_state_dict": model.state_dict(),
+            "best_state_dict": best_model,
+            "anchors": generator.anchors.detach().clone().cpu(),
+            "labels": generator.labels.detach().clone().cpu(),
+            **conf,
+            **result
+        }, 
+        model_path)
     return result
 
 def train_baseline_conf(conf):
@@ -148,6 +156,8 @@ def train_baseline_conf(conf):
     unfreeze_after = conf['unfreeze_after']
     experiment = conf['name']
     id = conf['id']
+    save = conf['save']
+    verbose = conf['verbose']
 
     aug = functools.partial(utils.diff_augment, strategy=augmentations, param=utils.ParamDiffAug())
     # Load the dataset
@@ -189,38 +199,44 @@ def train_baseline_conf(conf):
     train_losses = []
     test_losses = []
     best_model = None
-    epoch_iter = tqdm.trange(num_epochs, desc=mode)
+    if verbose:
+        epoch_iter = tqdm.trange(num_epochs, desc=mode)
+    else:
+        epoch_iter = range(num_epochs)
     test_acc = 0
     for epoch in epoch_iter:
         if epoch == int(num_epochs*unfreeze_after) and pretrained:
             model.encoder_grad(True)
-        epoch_iter.set_description(f"{mode} - training")
+        if verbose:
+            epoch_iter.set_description(f"{mode} - training")
         train_acc, train_loss = utils.train(model, loader, optimizer, criterion, aug=aug)
         train_accs.append(train_acc)
         train_losses.append(train_loss)
-
-        epoch_iter.set_description(f"{mode} - evaluating")
+        if verbose:
+            epoch_iter.set_description(f"{mode} - evaluating")
         test_acc_tmp, test_loss = utils.test(model, eval_data, criterion)
         test_accs.append(test_acc_tmp)
         test_losses.append(test_loss)
         if test_acc_tmp > test_acc:
             best_model = model.state_dict()
         test_acc=test_acc_tmp
-    epoch_iter.set_description(f"{mode} - Done")
-    epoch_iter.set_postfix(test_acc=f"{test_acc*100:.1f}%", train_acc=f"{train_acc*100:.1f}%", train_loss=f"{train_loss:.4f}", test_loss=f"{test_loss:.4f}")
-    model_path = checkpoint_path / f"{dataset}/{model.name}/pretrained_{pretrained}/{experiment}/{mode}_exp{exp}_acc{int(max(test_accs)*1000)}_id{id}.pth"
-    model_path.parent.mkdir(parents=True, exist_ok=True)
+    if verbose:
+        epoch_iter.set_description(f"{mode} - Done")
+        epoch_iter.set_postfix(test_acc=f"{test_acc*100:.1f}%", train_acc=f"{train_acc*100:.1f}%", train_loss=f"{train_loss:.4f}", test_loss=f"{test_loss:.4f}")
     result = {
         "test_acc" : test_accs,
         "train_acc" : train_accs,
     }
-    torch.save({
-        "latest_state_dict": model.state_dict(),
-        "best_state_dict": best_model,
-        **conf,
-        **result
-    }, 
-    model_path)
+    if save:
+        model_path = checkpoint_path / f"{dataset}/{model.name}/pretrained_{pretrained}/{experiment}/{mode}_exp{exp}_acc{int(max(test_accs)*1000)}_id{id}.pth"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            "latest_state_dict": model.state_dict(),
+            "best_state_dict": best_model,
+            **conf,
+            **result
+        }, 
+        model_path)
     return result
 
 

@@ -41,6 +41,8 @@ augmentations: color_crop_cutout_flip_scale_rotate
 shuffle: True
 unfreeze_after: 0.2
 # ==== compute ====
+verbose: True
+save: True
 device: cuda
 nodes: [0]
 jobs_per_node: 1
