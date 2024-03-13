@@ -56,10 +56,10 @@ def train_strategy_conf(conf):
             'G_shared': False, 
             }
 
-        loader = utils.GeneratorDatasetLoader(torch.randn(len(real_data['train']), dim_z), real_data['label_train'], 'BigGAN', config, generator_path, shuffle=shuffle, num_workers=num_workers, batch_size=batch_size, device=device, use_cache=strategy_name=='Static')
+        generator = utils.GeneratorDatasetLoader(torch.randn(len(real_data['train']), dim_z), real_data['label_train'], 'BigGAN', config, generator_path, shuffle=shuffle, num_workers=num_workers, batch_size=batch_size, device=device, use_cache=strategy_name=='Static')
     else:
         anchors_path = checkpoint_path / utils.anchor_path(conf['anchors_path'], mode, dataset, exp)
-        loader = utils.get_generator(anchors_path, generator_path, shuffle=shuffle, 
+        generator = utils.get_generator(anchors_path, generator_path, shuffle=shuffle, 
                                     num_workers=num_workers, batch_size=batch_size, device=device, use_cache=strategy_name=='Static')
     eval_data = utils.DeviceDataLoader(real_data['test'], batch_size=batch_size, shuffle=False, num_workers=num_workers, device=device)
 
@@ -69,14 +69,14 @@ def train_strategy_conf(conf):
     model = TimmModel(model_name, real_data['num_classes'], drop_rate=drop_rate, pretrained=pretrained).to(device)
     model.encoder_grad(not pretrained)
     model.head_grad(True)
-    utils.set_transforms(model, mode, loader, eval_data, pretrained)
+    utils.set_transforms(model, mode, generator, eval_data, pretrained)
     utils.set_transforms(model, 'Real', train_data, None, pretrained)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     # lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(loader)*num_epochs)
     # scaler = torch.cuda.amp.GradScaler()
     strategy = utils.get_strategy(conf['strategy'], 
-                                  generator=loader,
+                                  generator=generator,
                                   model=model, 
                                   real_data=train_data,
                                   )
@@ -96,7 +96,7 @@ def train_strategy_conf(conf):
         if epoch == int(num_epochs*unfreeze_after) and pretrained:
             model.encoder_grad(True)
         epoch_iter.set_description(f"{mode} - training")
-        train_acc, train_loss = utils.train(model, loader, optimizer, criterion, aug=aug)
+        train_acc, train_loss = utils.train(model, generator, optimizer, criterion, aug=aug)
         train_accs.append(train_acc)
         train_losses.append(train_loss)
 
@@ -118,6 +118,8 @@ def train_strategy_conf(conf):
     torch.save({
         "latest_state_dict": model.state_dict(),
         "best_state_dict": best_model,
+        "anchors": generator.anchors.detach().clone().cpu(),
+        "labels": generator.labels.detach().clone().cpu(),
         **conf,
         **result
     }, 

@@ -108,10 +108,6 @@ def get_strategy(strategy, generator, model, real_data):
         return strategies.Static()
     elif strategy['name'] == 'EilertsenEscape':
         return strategies.EilertsenEscape(generator, model, **strategy['args'])
-    elif strategy['name'] == 'LatentInversion':
-        return strategies.LatentInversion(generator, model, real_data, **strategy['args'])
-    elif strategy['name'] == 'PixelInversion':
-        return strategies.PixelInversion(generator, real_data, **strategy['args'])
     elif strategy['name'] == 'LPInversion':
         return strategies.LPInversion(generator, model, real_data, **strategy['args'])
     else:
@@ -373,6 +369,11 @@ class GeneratorDatasetLoader():
             self.generator.to('cpu')
             print('Done!')
         self.generator.requires_grad_(generator_grad)
+    def generate(self, data, label):
+        imgs = generate(self.generator, data, label, self.mean, self.std)
+        if self.transform is not None:
+            imgs = torch.stack([self.transform(img) for img in imgs])
+        return imgs
 
     def __iter__(self):
         if not self.use_cache:
@@ -382,13 +383,12 @@ class GeneratorDatasetLoader():
             label = label.to(self.device)
             if self.use_cache:
                 imgs = self.cache[index]
+                if self.transform is not None:
+                    imgs = torch.stack([self.transform(img) for img in imgs])
             else:
                 data = data.to(self.device)
-                imgs = generate(self.generator, data, label, self.mean, self.std)
-        
-            # imgs = self.generator(data, label)
-            if self.transform:
-                imgs = torch.stack([self.transform(img) for img in imgs])
+                imgs = self.generate(data, label)
+
             yield imgs, label, index
         if not self.use_cache:
             self.generator.to('cpu')

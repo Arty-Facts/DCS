@@ -19,14 +19,6 @@ strategy$:
       lr@: [float, 0.0001, 10, log]
       weight_decay@: [float, 0.000001, 0.1, log]
       reset_every@: [int, 1, 10, uniform_1]
-  - name: LatentInversion
-    args:
-      lr@: [float, 0.0001, 10, log]
-      weight_decay@: [float, 0.000001, 0.1, log]
-  - name: PixelInversion
-    args:
-      lr@: [float, 0.0001, 10, log]
-      weight_decay@: [float, 0.000001, 0.1, log]
   - name: LPInversion
     args:
       lr@: [float, 0.0001, 10, log]
