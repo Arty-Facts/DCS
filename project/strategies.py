@@ -34,7 +34,7 @@ class EilertsenEscape():
         if cache_intermediate:
             self.intermediate = [[self.generator.anchors.detach().clone().cpu()]]
 
-    def __call__(self,  verbose=False):
+    def __call__(self,  verbose=False, test=-1):
         if self.epoch_counter % self.reset_every == 0 and self.epoch_counter > 0:
             self.reset()
         self.epoch_counter += 1
@@ -42,11 +42,15 @@ class EilertsenEscape():
             data_iter = tqdm.tqdm(self.generator, desc=self.__class__.__name__)
         else:
             data_iter = self.generator
+        test_count = 0
         self.optimizer.zero_grad()
         for x, y, i in data_iter:
             y_hat = self.model(x)
             loss =  -self.criterion(y_hat, y)
             loss.backward()
+            if test == test_count:
+                break
+            test_count += 1
 
         self.optimizer.step()
         if self.cache_intermediate:
@@ -85,19 +89,22 @@ class LPInversion():
         if cache_intermediate:
             self.intermediate = [[self.generator.anchors.detach().clone().cpu()]]
 
-    def __call__(self,  verbose=False):
+    def __call__(self,  verbose=False, test=-1):
         if verbose:
             data_iter = tqdm.tqdm(self.generator, desc=self.__class__.__name__)
         else:
             data_iter = self.generator
+        test_count = 0
         self.optimizer.zero_grad()
-        
         for x, y, i in data_iter:
             real_x = torch.stack([self.real_data[p][0] for p in i]).to(x.device)
             emb = self.model.encode(x)
             real_emb = self.model.encode(real_x)
             loss = self.alpha*self.criterion(emb, real_emb) + (1-self.alpha)*self.criterion(x, real_x)
             loss.backward()
+            if test == test_count:
+                break
+            test_count += 1
 
         self.optimizer.step()
         if self.cache_intermediate:

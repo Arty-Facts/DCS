@@ -113,7 +113,7 @@ def get_strategy(strategy, generator, model, real_data):
     else:
         raise ValueError(f'Invalid strategy: {strategy}')
 
-def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, aug=None, verbose=False):
+def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, aug=None, verbose=False, test=-1):
     loss_sum = 0
     train_acc = 0
     model.train()
@@ -121,6 +121,7 @@ def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, a
         data_iter = tqdm.tqdm(loader, desc='train')
     else:
         data_iter = loader
+    iter_count = 0
     for x, y, i in data_iter:
         if aug is not None:
             x = aug(x)
@@ -139,11 +140,14 @@ def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, a
             optimizer.step()
         if lr_scheduler is not None:
             lr_scheduler.step()
-    train_acc /= len(loader.dataset)
-    loss_sum /= len(loader)
+        iter_count += 1
+        if test == iter_count:
+            break
+    train_acc /= iter_count * loader.batch_size
+    loss_sum /= iter_count
     return train_acc,  loss_sum
 
-def test(model, loader, criterion, verbose=False):
+def test(model, loader, criterion, verbose=False, test=-1):
     loss_sum = 0
     test_acc = 0
     model.eval()
@@ -151,14 +155,18 @@ def test(model, loader, criterion, verbose=False):
         data_iter = tqdm.tqdm(loader, desc='test')
     else:
         data_iter = loader
+    iter_count = 0
     with torch.no_grad():
         for x, y, i in data_iter:
             y_hat = model(x)
             loss = criterion(y_hat, y)
             test_acc += (y_hat.argmax(-1) == y).float().sum().item()
             loss_sum += loss.item()
-    test_acc /= len(loader.dataset)
-    loss_sum /= len(loader)
+            iter_count += 1
+            if test == iter_count:
+                break
+    test_acc /= iter_count * loader.batch_size
+    loss_sum /= iter_count
     return test_acc, loss_sum
 
 def renormalize(img, mean, std):
@@ -364,16 +372,29 @@ class DatasetLoader():
     def set_transform(self, transform):
         self.dataset.transform = transform
 
+class TensorDataset():
+    def __init__(self, data, target):
+        self.data = data
+        self.target = target
+    def __getitem__(self, index):
+        return self.data[index], self.target[index], index
+    def __len__(self):
+        return len(self.data)
+
 class GeneratorDatasetLoader():
     def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cuda", use_cache=True, generator_grad=True):
         self.labels = labels.long()
-        self.anchors = anchors
+        if use_cache:
+            self.anchors = anchors
+        else:
+            self.anchors = anchors.to(device)
         self.generator_name = generator
         self.config = config
-        self.dataset = torch.utils.data.TensorDataset(self.anchors, self.labels, torch.arange(len(self.labels)))
+        self.dataset = TensorDataset(self.anchors, self.labels)
         self.generator, self.mean, self.std = load_generator(generator, config, weight_path)
-        self.mean = self.mean
-        self.std = self.std
+        if not use_cache:
+            self.mean = self.mean.to(device)
+            self.std = self.std.to(device)
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.num_workers = num_workers
@@ -400,6 +421,7 @@ class GeneratorDatasetLoader():
             self.generator.to('cpu')
             print('Done!')
         self.generator.requires_grad_(generator_grad)
+
     def generate(self, data, label):
         imgs = generate(self.generator, data, label, self.mean, self.std)
         if self.transform is not None:

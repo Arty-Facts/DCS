@@ -16,6 +16,7 @@ from collections import defaultdict
 import project.augmentations as aug_lib
 
 def train_strategy_conf(conf):
+    # torch.autograd.set_detect_anomaly(True)
     dataset = conf['dataset']
     device = conf['device'] 
     exp = conf['exp']

@@ -41,11 +41,11 @@ augmentations: color_crop_cutout_flip_scale_rotate
 shuffle: True
 unfreeze_after: 0.2
 # ==== compute ====
-verbose: True
+verbose: False
 save: False
 device: cuda
-nodes: [0]
-jobs_per_node: 1
+nodes: [0, 1, 2, 3]
+jobs_per_node: 2
 iterations: 2
 # ==== optuna ====
 trials: 100
