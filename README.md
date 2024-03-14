@@ -90,3 +90,5 @@ The experiment data have been released in [Google Drive](https://drive.google.co
 The released data include: [1] pretrained BigGAN Generators; [2] GAN Inversion learned latent vectors (z); [3] IT-GAN learned latent vectors (z). 
 
 We also provide some raw training codes which have been neither re-organized nor validated. Just for reference. The raw training code is [here](https://drive.google.com/drive/folders/1vENTbqDdt6f0K2fQpuUfuCEnj_09Bqeh?usp=sharing). Replace md_utils.py with utils.py, md_networks.py with networks.py if applicable. 
+
+auto augment 
