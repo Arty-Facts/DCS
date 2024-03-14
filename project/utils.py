@@ -333,6 +333,36 @@ def set_transforms(model, mode, loader, eval, pretrained=True):
             loader.set_transform(torchvision.transforms.Compose([t for t in model.transform.transforms if isinstance(t, transforms.Normalize)]))
             # loader.set_transform(None)
 
+class DatasetLoader():
+    def __init__(self, dataset, batch_size, shuffle=True, drop_last=False, collate_fn=diff_stack):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        if drop_last:
+            self.len = len(self.dataset)//self.batch_size
+        elif len(self.dataset) % self.batch_size == 0:
+            self.len = len(self.dataset)//self.batch_size
+        else:
+            self.len = len(self.dataset)//self.batch_size + 1
+        self.collate_fn = collate_fn
+
+
+    def __iter__(self):
+        if self.shuffle:
+            indices = torch.randperm(len(self.dataset))
+        else:
+            indices = torch.arange(len(self.dataset))
+
+        for i in range(0, len(indices), self.batch_size):
+            yield self.collate_fn(self.dataset[indices[i:i+self.batch_size]])
+            
+        
+    def __len__(self):
+        return self.len
+
+    def set_transform(self, transform):
+        self.dataset.transform = transform
+
 class GeneratorDatasetLoader():
     def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cuda", use_cache=True, generator_grad=True):
         self.labels = labels.long()
@@ -348,7 +378,7 @@ class GeneratorDatasetLoader():
         self.num_workers = num_workers
         self.device = device
        
-        self.loader = torch.utils.data.DataLoader(self.dataset, batch_size=self.batch_size, shuffle=self.shuffle, num_workers=self.num_workers, collate_fn=diff_stack)
+        self.loader = DatasetLoader(self.dataset, batch_size=self.batch_size, shuffle=self.shuffle, collate_fn=diff_stack)
         self.transform = None
         self.generator.eval()
         self.use_cache = use_cache
