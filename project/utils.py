@@ -110,6 +110,8 @@ def get_strategy(strategy, generator, model, real_data):
         return strategies.EilertsenEscape(generator, model, **strategy['args'])
     elif strategy['name'] == 'LPInversion':
         return strategies.LPInversion(generator, model, real_data, **strategy['args'])
+    elif strategy['name'] == 'RandomNoise':
+        return strategies.RandomNoise(generator, **strategy['args'])
     else:
         raise ValueError(f'Invalid strategy: {strategy}')
 

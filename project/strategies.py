@@ -110,3 +110,39 @@ class LPInversion():
         if self.cache_intermediate:
             self.intermediate[0].append(self.generator.anchors.detach().clone().cpu())
         return self
+    
+class RandomNoise():
+    def __init__(self,
+                 generator,
+                 step_size=0.01, 
+                 reset_every=10,
+                 cache_intermediate=False):
+
+        self.generator = generator
+        self.original = generator.anchors.detach().clone()
+
+        self.step_size = step_size
+        self.reset_every = reset_every
+        self.epoch_counter = 0
+        self.intermediate = None
+        self.cache_intermediate = cache_intermediate
+        self.reset_counter = 0
+        if cache_intermediate:
+            self.intermediate = [[self.generator.anchors.detach().clone().cpu()]]
+
+    def __call__(self,  verbose=False, test=-1):
+        if self.epoch_counter % self.reset_every == 0 and self.epoch_counter > 0:
+            self.reset()
+        self.epoch_counter += 1
+        noise = torch.randn_like(self.generator.anchors, device=self.generator.device)
+        self.generator.anchors.data += self.step_size*noise
+
+        if self.cache_intermediate:
+            self.intermediate[self.reset_counter].append(self.generator.anchors.detach().clone().cpu())
+        return self
+    
+    def reset(self):
+        self.generator.anchors.data = self.original.clone()
+        self.reset_counter += 1
+        if self.cache_intermediate:
+            self.intermediate.append([self.generator.anchors.detach().clone().cpu()])
