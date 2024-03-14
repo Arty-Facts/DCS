@@ -354,7 +354,8 @@ class DatasetLoader():
             indices = torch.arange(len(self.dataset))
 
         for i in range(0, len(indices), self.batch_size):
-            yield self.collate_fn(self.dataset[indices[i:i+self.batch_size]])
+            batch = [self.dataset[j] for j in indices[i:i+self.batch_size]]
+            yield self.collate_fn(batch)
             
         
     def __len__(self):
