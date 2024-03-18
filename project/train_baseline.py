@@ -321,7 +321,7 @@ def train_optuna():
 
     gpu_nodes = cfg['nodes']*cfg['jobs_per_node']
     random.shuffle(jobs)
-    utils.parallelize(utils.ask_tell_optuna, jobs, gpu_nodes, timeout=60*60*12)
+    utils.parallelize(utils.ask_tell_optuna, jobs, gpu_nodes, timeout=60*60*48)
 
 
 def train_baseline():
