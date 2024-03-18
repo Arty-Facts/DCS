@@ -13,8 +13,8 @@ mysql_conf_dir = 'd:/mysql/dcs/conf'  # Adjust for Linux if necessary
 mysql_data_dir = 'd:/mysql/dcs/db'  # Adjust for Linux if necessary
 source_conf_content = """
 [mysqld]
-max_connections=100000
-thread_cache_size=1000
+max_connections=10000
+thread_cache_size=100
 innodb_buffer_pool_size=16G
 innodb-buffer-pool-instances=32
 innodb_thread_concurrency = 0

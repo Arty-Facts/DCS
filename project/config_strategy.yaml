@@ -1,5 +1,5 @@
 id: 0
-name: DCS_S_10
+name: DCS_S_200
 # ==== data ====
 root_path: H:/arty/data/IT-GAN
 data_path: data
@@ -33,7 +33,7 @@ exp: 0
 # ==== training ====
 batch_size: 256
 num_workers: 0
-num_epochs: 10
+num_epochs: 200
 lr@: [float, 0.0001, 0.1, log]
 # lr: 0.01
 weight_decay@: [float, 0.000001, 0.1, log]
