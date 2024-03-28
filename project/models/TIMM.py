@@ -8,12 +8,15 @@ class TimmModel(nn.Module):
         self.encoder = timm.create_model(model_name, pretrained=pretrained, num_classes=0)
         data_config = timm.data.resolve_model_data_config(self.encoder)   
         self.transform = timm.data.create_transform(**data_config, is_training=pretrained, no_aug=True)
-        self.head = nn.Sequential(
-            nn.Linear(self.encoder.num_features, self.encoder.num_features), 
-            nn.ReLU(),
-            nn.Dropout(drop_rate),
-            nn.Linear(self.encoder.num_features, num_classes)
-        )
+        self.num_classes = num_classes
+        self.head = nn.Identity()
+        if num_classes > 0:
+            self.head = nn.Sequential(
+                nn.Linear(self.encoder.num_features, self.encoder.num_features), 
+                nn.ReLU(),
+                nn.Dropout(drop_rate),
+                nn.Linear(self.encoder.num_features, num_classes)
+            )
         self.encoder_grad(True)
         self.head_grad(True)
 

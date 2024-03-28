@@ -326,22 +326,17 @@ def diff_stack(batch):
     index = torch.stack(index_tensors)
     return data, targets, index
 
-def set_transforms(model, mode, loader, eval, pretrained=True):
+def get_transforms(model, mode, pretrained=True):
     if pretrained:
-        if eval is not None:
-            eval.set_transform(model.transform)
         if mode == 'Real':
-            loader.set_transform(torchvision.transforms.Compose(model.transform.transforms))
+            return model.transform
         else:
-            loader.set_transform(torchvision.transforms.Compose([t for t in model.transform.transforms if not isinstance(t, transforms.ToTensor)])) 
+            return torchvision.transforms.Compose([t for t in model.transform.transforms if not isinstance(t, transforms.ToTensor)])
     else:
-        if eval is not None:
-            eval.set_transform(torchvision.transforms.Compose([transforms.ToTensor()] + [t for t in model.transform.transforms if isinstance(t, transforms.Normalize)]))
         if mode == 'Real':
-            loader.set_transform(torchvision.transforms.Compose([transforms.ToTensor()] + [t for t in model.transform.transforms if isinstance(t, transforms.Normalize)]))
+            return torchvision.transforms.Compose([transforms.ToTensor()] + [t for t in model.transform.transforms if isinstance(t, transforms.Normalize)])
         else:
-            loader.set_transform(torchvision.transforms.Compose([t for t in model.transform.transforms if isinstance(t, transforms.Normalize)]))
-            # loader.set_transform(None)
+            return torchvision.transforms.Compose([t for t in model.transform.transforms if isinstance(t, transforms.Normalize)])
 
 class DatasetLoader():
     def __init__(self, dataset, batch_size, shuffle=True, drop_last=False, collate_fn=diff_stack):
@@ -426,8 +421,6 @@ class GeneratorDatasetLoader():
 
     def generate(self, data, label):
         imgs = generate(self.generator, data, label, self.mean, self.std)
-        if self.transform is not None:
-            imgs = torch.stack([self.transform(img) for img in imgs])
         return imgs
 
     def __iter__(self):
@@ -438,8 +431,6 @@ class GeneratorDatasetLoader():
             label = label.to(self.device)
             if self.use_cache:
                 imgs = self.cache[index]
-                if self.transform is not None:
-                    imgs = torch.stack([self.transform(img) for img in imgs])
             else:
                 data = data.to(self.device)
                 imgs = self.generate(data, label)
@@ -456,6 +447,17 @@ class GeneratorDatasetLoader():
 
     def reset(self):
         self.anchors.data = self.original_anchors.data.clone()
+    
+class TransformLoader():
+    def __init__(self, dataloader, transform):
+        self.dataloader = dataloader
+        self.transform = transform
+
+    def __iter__(self):
+        for batch in self.dataloader:
+            data, *rest = batch
+            data = torch.stack([self.transform(d) for d in data])
+            yield data, *rest
 
 
 class DeviceDataLoader():

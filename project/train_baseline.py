@@ -64,6 +64,7 @@ def train_strategy_conf(conf):
         anchors_path = checkpoint_path / utils.anchor_path(conf['anchors_path'], mode, dataset, exp)
         generator = utils.get_generator(anchors_path, generator_path, shuffle=shuffle, 
                                     num_workers=num_workers, batch_size=batch_size, device=device, use_cache=strategy_name=='Static')
+    
     eval_data = utils.DeviceDataLoader(real_data['test'], batch_size=batch_size, shuffle=False, num_workers=num_workers, device=device)
 
     train_data = utils.DeviceDataLoader(real_data['train'], batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, device=device)
@@ -72,8 +73,11 @@ def train_strategy_conf(conf):
     model = TimmModel(model_name, real_data['num_classes'], drop_rate=drop_rate, pretrained=pretrained).to(device)
     model.encoder_grad(not pretrained)
     model.head_grad(True)
-    utils.set_transforms(model, mode, generator, eval_data, pretrained)
-    utils.set_transforms(model, 'Real', train_data, None, pretrained)
+    transform_gen = utils.get_transforms(model, mode, pretrained)
+    transform_real = utils.get_transforms(model, 'Real', pretrained)
+    gen_loader = utils.TransformLoader(generator, transform_gen)
+    eval_loader = utils.TransformLoader(eval_data, transform_real)
+
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     # lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(loader)*num_epochs)
@@ -103,12 +107,12 @@ def train_strategy_conf(conf):
             model.encoder_grad(True)
         if verbose:
             epoch_iter.set_description(f"{mode} - training")
-        train_acc, train_loss = utils.train(model, generator, optimizer, criterion, aug=aug)
+        train_acc, train_loss = utils.train(model, gen_loader, optimizer, criterion, aug=aug)
         train_accs.append(train_acc)
         train_losses.append(train_loss)
         if verbose:
             epoch_iter.set_description(f"{mode} - evaluating")
-        test_acc_tmp, test_loss = utils.test(model, eval_data, criterion)
+        test_acc_tmp, test_loss = utils.test(model, eval_loader, criterion)
         test_accs.append(test_acc_tmp)
         test_losses.append(test_loss)
         if test_acc_tmp > test_acc:
@@ -190,7 +194,8 @@ def train_baseline_conf(conf):
     model = TimmModel(model_name, real_data['num_classes'], drop_rate=drop_rate, pretrained=pretrained).to(device)
     model.encoder_grad(not pretrained)
     model.head_grad(True)
-    utils.set_transforms(model, mode, loader, eval_data, pretrained)
+    train_loader = utils.TransformLoader(loader, utils.get_transforms(model, mode, pretrained))
+    eval_loader = utils.TransformLoader(eval_data, utils.get_transforms(model, 'Real', pretrained))
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     # lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(loader)*num_epochs)
@@ -210,12 +215,12 @@ def train_baseline_conf(conf):
             model.encoder_grad(True)
         if verbose:
             epoch_iter.set_description(f"{mode} - training")
-        train_acc, train_loss = utils.train(model, loader, optimizer, criterion, aug=aug)
+        train_acc, train_loss = utils.train(model, train_loader, optimizer, criterion, aug=aug)
         train_accs.append(train_acc)
         train_losses.append(train_loss)
         if verbose:
             epoch_iter.set_description(f"{mode} - evaluating")
-        test_acc_tmp, test_loss = utils.test(model, eval_data, criterion)
+        test_acc_tmp, test_loss = utils.test(model, eval_loader, criterion)
         test_accs.append(test_acc_tmp)
         test_losses.append(test_loss)
         if test_acc_tmp > test_acc:

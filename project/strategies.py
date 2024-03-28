@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import tqdm
+import project.utils as utils
+import project.models.TIMM as timm
 
 class Static():
     def __init__(self, *args, **kwargs):
@@ -23,6 +25,7 @@ class EilertsenEscape():
         self.learnable = learnable
         self.generator = generator
         self.model = model
+        self.gen_loader = utils.TransformLoader(generator, utils.get_transforms(model, "GEN", False))
         self.original = [p.detach().clone() for p in learnable]
         self.optimizer = torch.optim.SGD(learnable, lr=lr, weight_decay=weight_decay)
         self.criterion = criterion_classifier
@@ -39,9 +42,9 @@ class EilertsenEscape():
             self.reset()
         self.epoch_counter += 1
         if verbose:
-            data_iter = tqdm.tqdm(self.generator, desc=self.__class__.__name__)
+            data_iter = tqdm.tqdm(self.gen_loader, desc=self.__class__.__name__)
         else:
-            data_iter = self.generator
+            data_iter = self.gen_loader
         test_count = 0
         self.optimizer.zero_grad()
         for x, y, i in data_iter:
@@ -79,6 +82,7 @@ class LPInversion():
         self.generator = generator
         self.real_data = real_data.dataset
         self.model = model
+        self.gen_loader = utils.TransformLoader(generator, utils.get_transforms(model, "GEN", False))
         self.original = [p.detach().clone() for p in learnable]
         self.optimizer = torch.optim.Adam(learnable, lr=lr, weight_decay=weight_decay)
         self.criterion = criterion_classifier
@@ -91,9 +95,57 @@ class LPInversion():
 
     def __call__(self,  verbose=False, test=-1):
         if verbose:
-            data_iter = tqdm.tqdm(self.generator, desc=self.__class__.__name__)
+            data_iter = tqdm.tqdm(self.gen_loader, desc=self.__class__.__name__)
         else:
-            data_iter = self.generator
+            data_iter = self.gen_loader
+        test_count = 0
+        self.optimizer.zero_grad()
+        for x, y, i in data_iter:
+            real_x = torch.stack([self.real_data[p][0] for p in i]).to(x.device)
+            emb = self.model.encode(x)
+            real_emb = self.model.encode(real_x)
+            loss = self.alpha*self.criterion(emb, real_emb) + (1-self.alpha)*self.criterion(x, real_x)
+            loss.backward()
+            if test == test_count:
+                break
+            test_count += 1
+
+        self.optimizer.step()
+        if self.cache_intermediate:
+            self.intermediate[0].append(self.generator.anchors.detach().clone().cpu())
+        return self
+    
+class LPInversion_Pertained():
+    def __init__(self,
+                 generator,
+                 model_name,
+                 real_data,
+                 lr=0.01, weight_decay=0.0, alpha=0.5,
+                 cache_intermediate=False,
+                 criterion_classifier=nn.MSELoss()):
+        learnable = [generator.anchors]
+        for p in learnable:
+            p.requires_grad = True
+        self.learnable = learnable
+        self.generator = generator
+        self.real_data = real_data.dataset
+        self.model = timm.TimmModel(model_name, num_classes=0, pretrained=True)
+        self.gen_loader = utils.TransformLoader(generator, utils.get_transforms(self.model, "GEN"))
+        self.original = [p.detach().clone() for p in learnable]
+        self.optimizer = torch.optim.Adam(learnable, lr=lr, weight_decay=weight_decay)
+        self.criterion = criterion_classifier
+        self.intermediate = None
+        self.alpha = alpha
+        self.cache_intermediate = cache_intermediate
+        self.reset_counter = 0
+        if cache_intermediate:
+            self.intermediate = [[self.generator.anchors.detach().clone().cpu()]]
+
+    def __call__(self,  verbose=False, test=-1):
+        if verbose:
+            data_iter = tqdm.tqdm(self.gen_loader, desc=self.__class__.__name__)
+        else:
+            data_iter = self.gen_loader
         test_count = 0
         self.optimizer.zero_grad()
         for x, y, i in data_iter:
