@@ -11,6 +11,7 @@ import optuna
 import tqdm
 from project.BigGAN import Generator
 import project.strategies as strategies
+import project.models.TIMM as timm
 
 class dummy:
     @staticmethod
@@ -103,19 +104,23 @@ def get_opuna_value(name, opt_values, trial):
 def str_to_torch(name, value):
     return value
 
-def get_strategy(strategy, generator, model, real_data):
-    if strategy['name'] == 'Static':
-        return strategies.Static()
-    elif strategy['name'] == 'EilertsenEscape':
-        return strategies.EilertsenEscape(generator, model, **strategy['args'])
-    elif strategy['name'] == 'LPInversion':
-        return strategies.LPInversion(generator, model, real_data, **strategy['args'])
+def get_strategy(strategy, generator, model, real_data, device):
+    if strategy['name'] == 'EilertsenEscape':
+        strat = strategies.EilertsenEscape(**strategy['strat_args'])
+    elif strategy['name'] == 'Matcher':
+        model_name = strategy['strat_args'].pop('model_name', None)
+        if model_name is not None:
+            strat = strategies.Matcher(model=model, **strategy['strat_args'])
+        else:
+            encoder_model = timm.TimmModel(model_name, 0,  pretrained=True).to(device)
+            strat = strategies.Matcher(model=encoder_model, **strategy['strat_args'])
     elif strategy['name'] == 'RandomNoise':
-        return strategies.RandomNoise(generator, **strategy['args'])
+        strat =  strategies.RandomNoise(**strategy['strat_args'])
     else:
         raise ValueError(f'Invalid strategy: {strategy}')
+    return strategies.LatentWalker(generator, real_data, model, strategy=strat, **strategy['walker_args'])
 
-def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, aug=None, verbose=False, test=-1):
+def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, aug=None, verbose=False):
     loss_sum = 0
     train_acc = 0
     model.train()
@@ -143,13 +148,11 @@ def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, a
         if lr_scheduler is not None:
             lr_scheduler.step()
         iter_count += 1
-        if test == iter_count:
-            break
     train_acc /= iter_count * loader.batch_size
     loss_sum /= iter_count
     return train_acc,  loss_sum
 
-def test(model, loader, criterion, verbose=False, test=-1):
+def test(model, loader, criterion, verbose=False):
     loss_sum = 0
     test_acc = 0
     model.eval()
@@ -165,8 +168,6 @@ def test(model, loader, criterion, verbose=False, test=-1):
             test_acc += (y_hat.argmax(-1) == y).float().sum().item()
             loss_sum += loss.item()
             iter_count += 1
-            if test == iter_count:
-                break
     test_acc /= iter_count * loader.batch_size
     loss_sum /= iter_count
     return test_acc, loss_sum
@@ -326,6 +327,15 @@ def diff_stack(batch):
     index = torch.stack(index_tensors)
     return data, targets, index
 
+def imge_stack(batch):
+    data = [item[0] for item in batch]
+    target_tensors = [item[1] for item in batch]
+    index_tensors = [item[2] for item in batch]
+    targets = torch.tensor(target_tensors, dtype=torch.long)
+    index = torch.tensor(index_tensors, dtype=torch.long)
+    return data, targets, index
+
+
 def get_transforms(model, mode, pretrained=True):
     if pretrained:
         if mode == 'Real':
@@ -379,12 +389,16 @@ class TensorDataset():
         return len(self.data)
 
 class GeneratorDatasetLoader():
-    def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cuda", use_cache=True, generator_grad=True):
+    def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cuda", use_cache=True, generator_grad=True, test=-1):
+        if test != -1:
+            labels = labels[:test]
+            anchors = anchors[:test]
         self.labels = labels.long()
         if use_cache:
             self.anchors = anchors
         else:
             self.anchors = anchors.to(device)
+        self.original_anchors = self.anchors.clone()
         self.generator_name = generator
         self.config = config
         self.dataset = TensorDataset(self.anchors, self.labels)
@@ -418,14 +432,14 @@ class GeneratorDatasetLoader():
             self.generator.to('cpu')
             print('Done!')
         self.generator.requires_grad_(generator_grad)
+        if not self.use_cache:
+            self.generator.to(self.device)
 
     def generate(self, data, label):
         imgs = generate(self.generator, data, label, self.mean, self.std)
         return imgs
 
     def __iter__(self):
-        if not self.use_cache:
-            self.generator.to(self.device)
         for batch in self.loader:
             data, label, index = batch
             label = label.to(self.device)
@@ -436,8 +450,6 @@ class GeneratorDatasetLoader():
                 imgs = self.generate(data, label)
 
             yield imgs, label, index
-        if not self.use_cache:
-            self.generator.to('cpu')
     
     def __len__(self):
         return len(self.loader)
@@ -448,39 +460,27 @@ class GeneratorDatasetLoader():
     def reset(self):
         self.anchors.data = self.original_anchors.data.clone()
     
+
+                                        
+    
 class TransformLoader():
-    def __init__(self, dataloader, transform):
+    def __init__(self, dataloader, transform, device="cuda"):
         self.dataloader = dataloader
         self.transform = transform
+        self.batch_size = dataloader.batch_size
+        self.device = device
+
 
     def __iter__(self):
         for batch in self.dataloader:
-            data, *rest = batch
-            data = torch.stack([self.transform(d) for d in data])
-            yield data, *rest
-
-
-class DeviceDataLoader():
-    def __init__(self, dataset, batch_size, shuffle=True, num_workers=0, device="cuda"):
-        self.dataset = dataset
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.num_workers = num_workers
-        self.device = device
-        self.loader = torch.utils.data.DataLoader(self.dataset, batch_size=self.batch_size, shuffle=self.shuffle, num_workers=self.num_workers)
-
-    def __iter__(self):
-        for batch in self.loader:
-            data, label, index = batch
-            data = data.to(self.device)
-            label = label.to(self.device)
-            yield data, label, index
+            data, target, *rest = batch
+            data = torch.stack([self.transform(d) for d in data]).to(self.device)
+            target = target.to(self.device)
+            yield data, target, *rest
         
     def __len__(self):
-        return len(self.loader)
+        return len(self.dataloader)
 
-    def set_transform(self, transform):
-        self.dataset.transform = transform
 
 
 def load_anchors(data_path):
