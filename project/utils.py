@@ -199,7 +199,7 @@ def get_label(dataset):
 class IndexDataset():
     def __init__(self, dataset):
         self.dataset = dataset
-    def __setattr__(self, __name: str, __value: torch.Any) -> None:
+    def __setattr__(self, __name: str, __value) -> None:
         if 'dataset' in self.__dict__:
             setattr(self.dataset, __name, __value)
         elif __name == 'dataset':
@@ -309,7 +309,7 @@ def match_loss(gw_syn, gw_real, metric, device):
 def load_generator(generator, config, weight_path):
     if generator == 'BigGAN':
         model = Generator(**config)
-        model.load_state_dict(torch.load(weight_path))
+        model.load_state_dict(torch.load(weight_path, weights_only=False))
         mean = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32)
         std = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32)
     else:
@@ -484,7 +484,7 @@ class TransformLoader():
 
 
 def load_anchors(data_path):
-    data = torch.load(data_path)
+    data = torch.load(data_path, weights_only=False)
     anchors = torch.from_numpy(data['anchors'])
     labels = torch.from_numpy(data['labels'])
     generator = data['generator']
