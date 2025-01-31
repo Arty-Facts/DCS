@@ -12,7 +12,7 @@ import seaborn as sns
 
 
 
-def plot(id_score, eval_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True, names=None):
+def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True, names=None):
     if verbose:
         print('Generating plots...')
 
@@ -35,9 +35,6 @@ def plot(id_score, eval_score, gen_score, oods, dataset, tile, out_dir='figs', v
     # Subplot 1: KDE plots
     sns.kdeplot(data=id_score, bw_adjust=.2, ax=ax, label=f'Real training: {np.mean(id_score):.2f}')
     add_shadow(ax, id_score)
-
-    sns.kdeplot(data=eval_score, bw_adjust=.2, ax=ax, label=f'Real validation: {np.mean(eval_score):.2f}')
-    add_shadow(ax, eval_score)
 
     sns.kdeplot(data=gen_score, bw_adjust=.2, ax=ax, label=f'Generated: {np.mean(gen_score):.2f}')
     add_shadow(ax, gen_score)
@@ -63,7 +60,8 @@ def plot(id_score, eval_score, gen_score, oods, dataset, tile, out_dir='figs', v
     filename = f"{tile}.svg"
     plt.savefig(out_dir / filename, bbox_inches='tight')
 
-
+def unnormalize(x):
+    return x.cpu() * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -126,7 +124,7 @@ def main():
 
             for (real_img, li, index) in real_loader:
                 for idx, ri in zip(index, real_img):
-                    real_images[int(l)][idx] = ri.detach().cpu()
+                    real_images[int(l)][idx] = unnormalize(ri).detach().cpu()
                 real_emb[li, index] = encoder(real_img).detach().cpu()
         with open(checkpoint_path/f"real_emb_{dataset}_{encoder_name}_{generator_name}.pt", 'wb') as f:
             torch.save(real_emb, f)
@@ -152,7 +150,7 @@ def main():
 
             for (gen_img, li, index) in gen_loader:
                 for idx, gi in zip(index, gen_img):
-                    gen_images[int(l)][idx] = gi.detach().cpu()
+                    gen_images[int(l)][idx] = unnormalize(gi).detach().cpu()
                 gen_emb[li, index] = encoder(gen_img).detach().cpu()
         with open(checkpoint_path/f"gen_emb_{dataset}_{encoder_name}_{generator_name}.pt", 'wb') as f:
             torch.save(gen_emb, f)
@@ -189,14 +187,14 @@ def main():
             ood_detector.to("cpu")
             torch.save(ood_detector.state_dict(), checkpoint_path/f"ood_detector_{dataset}_{encoder_name}_{generator_name}_{i}.pt")
             print(f"OOD Detector {i} Fitted")
-    scores_real = torch.zeros((10, 5000))
-    scores_gen = torch.zeros((10, 5000))
+    scores_real = torch.zeros((10, 10, 5000))
+    scores_gen = torch.zeros((10, 10, 5000))
 
     print("Calculating Scores")
     for i, ood_detector in tqdm.tqdm(enumerate(ood_detectors)):
         for index in range(10):
             if pathlib.Path(checkpoint_path / f'score_real_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
-                scores_real[index] = torch.load(checkpoint_path / f'score_real_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
+                scores_real[i][index] = torch.load(checkpoint_path / f'score_real_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
                 print(f"Loaded {index} scores, min: {scores_real[index].min()}, max: {scores_real[index].max()}, mean: {scores_real[index].mean()}")
             else:
                 ood_detector.to(device)
@@ -205,9 +203,9 @@ def main():
                 score_real = torch.from_numpy(score_real)
                 print(f"Computed {index} scores, min: {score_real.min()}, max: {score_real.max()}, mean: {score_real.mean()}")
                 torch.save(score_real, checkpoint_path / f'score_real_{index}_{dataset}_{encoder_name}.pt')
-                scores_real[index] = score_real
+                scores_real[i][index] = score_real
             if pathlib.Path(checkpoint_path / f'score_gen_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
-                scores_gen[index] = torch.load(checkpoint_path / f'score_gen_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
+                scores_gen[i][index] = torch.load(checkpoint_path / f'score_gen_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
                 print(f"Loaded {index} scores, min: {scores_gen[index].min()}, max: {scores_gen[index].max()}, mean: {scores_gen[index].mean()}")
             else:
                 ood_detector.to(device)
@@ -216,12 +214,33 @@ def main():
                 ood_detector.to("cpu")
                 print(f"Computed {index} scores, min: {score_gen.min()}, max: {score_gen.max()}, mean: {score_gen.mean()}")
                 torch.save(score_gen, checkpoint_path / f'score_gen_{index}_{dataset}_{encoder_name}.pt')
-                scores_gen[index] = score_gen
+                scores_gen[i][index] = score_gen
 
     print("Plotting")
     for i in range(10):
-        ood_scores = [scores_real[j] for j in range(10) if j != i] + [scores_gen[j] for j in range(10) if j != i]
-        plot(scores_real[i], scores_gen[i], ood_scores, dataset, f"{encoder_name}_{generator_name}_{i}")
+        ood_scores = [scores_real[i][j].numpy() for j in range(10) if j != i] + [scores_gen[i][j].numpy() for j in range(10) if j != i]
+        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores, dataset, f"{encoder_name}_{generator_name}_{i}")
+        samples = 10
+        sorted_index_real = torch.argsort(scores_real[i][i])
+        sorted_index_gen = torch.argsort(scores_gen[i][i])
+        indexs_real = sorted_index_real[torch.linspace(0, 5000-1, samples).to(torch.long)]
+        indexs_gen = sorted_index_gen[torch.linspace(0, 5000-1, samples).to(torch.long)]
+        scores_real_sample = scores_real[i][i][indexs_real]
+        scores_gen_sample = scores_gen[i][i][indexs_gen]
+        images_real_sample = [real_images[i][index] for index in indexs_real]
+        images_gen_sample = [gen_images[i][index] for index in indexs_gen]
+
+        fig, ax = plt.subplots(2, samples, figsize=(samples*2, 10))
+        for j in range(samples):
+            ax[0, j].imshow(images_real_sample[j]).permute(1, 2, 0)
+            ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
+            ax[0, j].axis('off')
+            ax[1, j].imshow(images_gen_sample[j]).permute(1, 2, 0)
+            ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
+            ax[1, j].axis('off')
+        plt.savefig(f"figs/{dataset}/sample_{encoder_name}_{generator_name}_{i}.svg")
+
+
         
 
 
