@@ -63,6 +63,13 @@ def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True,
 def unnormalize(x):
     return x.cpu() * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 
+def resize(x, size):
+    if len(x.shape) == 3:
+        x = x.unsqueeze(0)
+        return torch.nn.functional.interpolate(x, size=size, mode='bilinear', align_corners=False).squeeze(0)
+    else:
+        return torch.nn.functional.interpolate(x, size=size, mode='bilinear', align_corners=False)
+
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     mode = 'ITGAN'
@@ -124,7 +131,7 @@ def main():
 
             for (real_img, li, index) in real_loader:
                 for idx, ri in zip(index, real_img):
-                    real_images[int(l)][idx] = unnormalize(ri).detach().cpu()
+                    real_images[int(l)][idx] = resize(unnormalize(ri).detach().cpu(), (64, 64))
                 real_emb[li, index] = encoder(real_img).detach().cpu()
         with open(checkpoint_path/f"real_emb_{dataset}_{encoder_name}_{generator_name}.pt", 'wb') as f:
             torch.save(real_emb, f)
@@ -150,7 +157,7 @@ def main():
 
             for (gen_img, li, index) in gen_loader:
                 for idx, gi in zip(index, gen_img):
-                    gen_images[int(l)][idx] = unnormalize(gi).detach().cpu()
+                    gen_images[int(l)][idx] = resize(unnormalize(gi).detach().cpu(), (64, 64))
                 gen_emb[li, index] = encoder(gen_img).detach().cpu()
         with open(checkpoint_path/f"gen_emb_{dataset}_{encoder_name}_{generator_name}.pt", 'wb') as f:
             torch.save(gen_emb, f)
@@ -164,7 +171,6 @@ def main():
     pca_real = pca.transform(real_emb.view(-1, embedding_size).numpy())
     pca_gen = pca.transform(gen_emb.view(-1, embedding_size).numpy())
     fig, ax = plt.subplots(figsize=(20, 20))
-    print(pca_real.shape, pca_gen.shape)
     colors_hex = ['#FF0000', '#00FF00', '#0000FF', '#00FFFF', '#FF00FF', '#FFFF00', '#FFA500', '#800080', '#FFC0CB', '#008000']
     for i in range(10):
         pca_real_i = pca_real[i*5000:(i+1)*5000]#.mean(axis=0).reshape(1, -1)
@@ -177,13 +183,13 @@ def main():
 
     ood_detectors = [likelihood.RDM(embedding_size).to("cpu") for _ in range(10)]
     print("Fitting OOD Detectors")
-    for i, ood_detector in tqdm.tqdm(enumerate(ood_detectors)):
+    for i, ood_detector in tqdm.tqdm(list(enumerate(ood_detectors))):
         if pathlib.Path(checkpoint_path/f"ood_detector_{dataset}_{encoder_name}_{generator_name}_{i}.pt").exists() and not clean:
             ood_detector.load_state_dict(torch.load(checkpoint_path/f"ood_detector_{dataset}_{encoder_name}_{generator_name}_{i}.pt", weights_only=False))
             print(f"OOD Detector {i} Loaded")
         else:
             ood_detector.to(device)
-            ood_detector.fit(real_emb[i], batch_size=1024, n_epochs=500, verbose=True)
+            ood_detector.fit(real_emb[i], batch_size=1000, n_epochs=1000, verbose=False)
             ood_detector.to("cpu")
             torch.save(ood_detector.state_dict(), checkpoint_path/f"ood_detector_{dataset}_{encoder_name}_{generator_name}_{i}.pt")
             print(f"OOD Detector {i} Fitted")
@@ -191,35 +197,32 @@ def main():
     scores_gen = torch.zeros((10, 10, 5000))
 
     print("Calculating Scores")
-    for i, ood_detector in tqdm.tqdm(enumerate(ood_detectors)):
+    for i, ood_detector in tqdm.tqdm(list(enumerate(ood_detectors))):
         for index in range(10):
-            if pathlib.Path(checkpoint_path / f'score_real_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
-                scores_real[i][index] = torch.load(checkpoint_path / f'score_real_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
-                print(f"Loaded {index} scores, min: {scores_real[index].min()}, max: {scores_real[index].max()}, mean: {scores_real[index].mean()}")
+            if pathlib.Path(checkpoint_path / f'score_real_{i}_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
+                scores_real[i][index] = torch.load(checkpoint_path / f'score_real_{i}_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
             else:
                 ood_detector.to(device)
-                score_real = ood_detector.predict(real_emb[index], batch_size=2048)
+                score_real = ood_detector.predict(real_emb[index], batch_size=2048, verbose=False)
                 ood_detector.to("cpu")
                 score_real = torch.from_numpy(score_real)
-                print(f"Computed {index} scores, min: {score_real.min()}, max: {score_real.max()}, mean: {score_real.mean()}")
-                torch.save(score_real, checkpoint_path / f'score_real_{index}_{dataset}_{encoder_name}.pt')
+                torch.save(score_real, checkpoint_path / f'score_real_{i}_{index}_{dataset}_{encoder_name}.pt')
                 scores_real[i][index] = score_real
-            if pathlib.Path(checkpoint_path / f'score_gen_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
-                scores_gen[i][index] = torch.load(checkpoint_path / f'score_gen_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
-                print(f"Loaded {index} scores, min: {scores_gen[index].min()}, max: {scores_gen[index].max()}, mean: {scores_gen[index].mean()}")
+            if pathlib.Path(checkpoint_path / f'score_gen_{i}_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
+                scores_gen[i][index] = torch.load(checkpoint_path / f'score_gen_{i}_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
             else:
                 ood_detector.to(device)
-                score_gen = ood_detector.predict(gen_emb[index], batch_size=2048)
+                score_gen = ood_detector.predict(gen_emb[index], batch_size=2048, verbose=False)
                 score_gen = torch.from_numpy(score_gen)
                 ood_detector.to("cpu")
-                print(f"Computed {index} scores, min: {score_gen.min()}, max: {score_gen.max()}, mean: {score_gen.mean()}")
-                torch.save(score_gen, checkpoint_path / f'score_gen_{index}_{dataset}_{encoder_name}.pt')
+                torch.save(score_gen, checkpoint_path / f'score_gen_{i}_{index}_{dataset}_{encoder_name}.pt')
                 scores_gen[i][index] = score_gen
 
     print("Plotting")
     for i in range(10):
         ood_scores = [scores_real[i][j].numpy() for j in range(10) if j != i] + [scores_gen[i][j].numpy() for j in range(10) if j != i]
-        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores, dataset, f"{encoder_name}_{generator_name}_{i}")
+        names = [f"{j} Real" for j in range(10) if j != i] + [f"{j} Gen" for j in range(10) if j != i]
+        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores, dataset, f"{encoder_name}_{generator_name}_{i}", names=names)
         samples = 10
         sorted_index_real = torch.argsort(scores_real[i][i])
         sorted_index_gen = torch.argsort(scores_gen[i][i])
@@ -230,12 +233,12 @@ def main():
         images_real_sample = [real_images[i][index] for index in indexs_real]
         images_gen_sample = [gen_images[i][index] for index in indexs_gen]
 
-        fig, ax = plt.subplots(2, samples, figsize=(samples*2, 10))
+        fig, ax = plt.subplots(2, samples, figsize=(samples*2, 5))
         for j in range(samples):
-            ax[0, j].imshow(images_real_sample[j]).permute(1, 2, 0)
+            ax[0, j].imshow(images_real_sample[j].permute(1, 2, 0))
             ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
             ax[0, j].axis('off')
-            ax[1, j].imshow(images_gen_sample[j]).permute(1, 2, 0)
+            ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
             ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
             ax[1, j].axis('off')
         plt.savefig(f"figs/{dataset}/sample_{encoder_name}_{generator_name}_{i}.svg")
