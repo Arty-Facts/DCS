@@ -12,3 +12,5 @@ project/ludde.jpg
 project/astronaut_rides_horse.png
 figs/
 checkpoints/*
+*.svg
+checkpoints/
