@@ -12,7 +12,7 @@ import ood_detectors.residual as residual
 import seaborn as sns
 from torch.autograd import gradcheck
 
-PREFIX = "ood_distence_generation_guide"
+PREFIX = "odgg"
 
 def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True, names=None, extra=None):
     if verbose:
@@ -134,7 +134,7 @@ def main():
             images = list(zip(images, labels, indexs))
             labels = torch.tensor(labels)
 
-            real_loader = utils.TransformLoader(torch.utils.data.DataLoader(images, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack), utils.get_transforms(encoder, 'Real'), device=device)
+            real_loader = utils.ImageLoader(torch.utils.data.DataLoader(images, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack), utils.get_transforms(encoder, 'Real').to(device), device=device)
 
             for (real_img, li, index) in real_loader:
                 for idx, ri in zip(index, real_img):
@@ -160,7 +160,7 @@ def main():
             images = list(zip(images, labels, indexs))
             labels = torch.tensor(labels)
 
-            gen_loader = utils.TransformLoader(utils.GeneratorDatasetLoader(embeddings, labels, generator_name, config, weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size, device=device, use_cache=False), utils.get_transforms(encoder, 'Encoder'), device=device)
+            gen_loader = utils.TransformLoader(utils.GeneratorDatasetLoader(embeddings, labels, generator_name, config, weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size, device=device, use_cache=False), utils.get_transforms(encoder, 'Encoder', device=device), device=device)
 
             for (gen_img, li, index) in gen_loader:
                 for idx, gi in zip(index, gen_img):
@@ -245,25 +245,26 @@ def main():
         curr_data = data_blob[i]
         images, labels, embeddings = zip(*curr_data)
         embed = torch.stack(embeddings).clone()
+        imdexs = list(range(len(images)))
+        images = list(zip(images, labels, imdexs))
         labels = torch.tensor(labels)
+        
 
         for p in embed:
             p.requires_grad_(True)
 
-        for encoder_param in encoder.parameters():
-            encoder_param.requires_grad_(True)
-
-        optimizer = torch.optim.Adam([embed], lr=1e-3)
+        optimizers = [torch.optim.Adam([p], lr=1e-3) for p in embed]
         loss_func = ood_detectors[i]
 
 
         loss_func.to(device)
-        update_anchors(embed, labels, optimizer, 1000, loss_func, generator_name, config, weight_path, encoder, num_workers, batch_size, device)
-
-
+        generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=False)
+        update_epoch = 10
+        images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, optimizers, update_epoch, loss_func, generator, encoder, batch_size, device)
+        names = [f"epoch_{i}" for i in range(update_epoch)]
 
         plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores,  dataset, f"{PREFIX}_tuned_disp_plot_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}_gen", names=names)
-
+        scores_gen_sample_updated = [ood_scores[-1][j] for j in indexs_gen]
 
         fig, ax = plt.subplots(3, samples, figsize=(samples*2, 5))
         for j in range(samples):
@@ -273,8 +274,8 @@ def main():
             ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
             ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
             ax[1, j].axis('off')
-            ax[2, j].imshow(gen_images[j].permute(1, 2, 0))
-            ax[2, j].set_title(f"Gen Tuned {ood_scores[j]:.2f}")
+            ax[2, j].imshow(images_gen_sample_updated[j].permute(1, 2, 0))
+            ax[2, j].set_title(f"Gen Tuned {scores_gen_sample_updated[j]:.2f}")
             ax[2, j].axis('off')
         plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}.svg")
         
@@ -282,19 +283,41 @@ def main():
         
 
 
-def update_anchors(anchors, lables, optimizer, epochs, loss_func, generator_name, config, weight_path, encoder, num_workers, batch_size, device):
-    gen_loader = utils.TransformLoader(utils.GeneratorDatasetLoader(anchors, lables, generator_name, config, weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size, device=device, use_cache=False), utils.get_transforms(encoder, 'Encoder'), device=device)
+def update_anchors(anchors, images, lables, optimizers, epochs, loss_func, generator, encoder, batch_size, device):
+    real_trasform = utils.get_transforms(encoder, 'Real')
+    gen_transform = utils.get_transforms(encoder, 'Encoder').to(device)
+
+    out_images = [None]*len(anchors)
+    losses = []
+
     for epoch in tqdm.tqdm(range(epochs)):
-        losses = []
-        for (gen_img, li, index) in gen_loader:
-            optimizer.zero_grad()
-            gen_emb = encoder(gen_img)
-            ood_loss = loss_func(gen_emb)
-            ood_loss = ood_loss.mean()
-            ood_loss.backward()
-            optimizer.step()
-            losses.append(ood_loss.item())
-        print(f"Epoch {epoch} Loss: {sum(losses)/len(losses)}")
+        index_to_update = torch.arange(len(anchors))
+        shuffled_index = torch.randperm(len(index_to_update))
+        epoch_loss = 0
+        losses.append([0]*len(index_to_update))
+        for index_batch in shuffled_index.split(batch_size):
+            index_batch = index_to_update[index_batch]
+            for index in index_batch:
+                optimizers[index].zero_grad()
+            x = torch.stack([anchors[index].to(device) for index in index_batch])
+            y = torch.stack([lables[index].to(device) for index in index_batch])
+            gen_images = generator.generate(x, y)
+            gen_images = gen_transform(gen_images)
+            # real_images = torch.stack([real_trasform(images[i][0]) for i in index_batch]).to(x.device)
+            batch_embs = encoder(gen_images)
+            batch_loss = loss_func(batch_embs)
+            tot_loss = batch_loss.sum()
+            tot_loss.backward()
+            for index, loss, img in zip(index_batch, batch_loss, gen_images):
+                optimizers[index].step()
+                epoch_loss += loss.item()
+                out_images[index] = resize(unnormalize(img.detach().cpu()), (64, 64))
+                losses[-1][index] = loss.item()
+        epoch_loss /= len(index_to_update)
+        print(f"Epoch {epoch} Loss: {epoch_loss}")
+    return out_images, losses
+
+       
 
 
 if __name__ == "__main__":

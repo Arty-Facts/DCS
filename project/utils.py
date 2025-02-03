@@ -335,18 +335,91 @@ def imge_stack(batch):
     index = torch.tensor(index_tensors, dtype=torch.long)
     return data, targets, index
 
+class Upscale(torch.nn.Module):
+    def __init__(self, output_size, mode='bilinear'):
+        super().__init__()
 
-def get_transforms(model, mode, pretrained=True):
+        self.model = torch.nn.Upsample(size=output_size, mode=mode)
+    def forward(self, img):
+        return self.model(img)
+    
+    def __repr__(self):
+        return f'Upscale({self.model.size}, mode={self.model.mode})'
+    
+class Normalize(torch.nn.Module):
+    def __init__(self, mean, std):
+        super().__init__()
+        self.mean = torch.tensor(mean, dtype=torch.float32)
+        self.std = torch.tensor(std, dtype=torch.float32)
+        self.mean = self.mean.view(1, -1, 1, 1)
+        self.std = self.std.view(1, -1, 1, 1)
+        self.mean = torch.nn.Parameter(self.mean, requires_grad=True)
+        self.std = torch.nn.Parameter(self.std, requires_grad=True)
+    def forward(self, img):
+        return (img - self.mean) / self.std
+    def __repr__(self):
+        return f'Normalize(mean={self.mean}, std={self.std})'
+    
+class Composite(torch.nn.Module):
+    def __init__(self, transforms):
+        super().__init__()
+        self.transforms = torch.nn.ModuleList(transforms)
+
+    def forward(self, img):
+        for t in self.transforms:
+            img = t(img)
+        return img
+    
+    def __repr__(self):
+        return f'Composite({self.transforms})'
+
+def get_transforms(model, mode, pretrained=True, device='cpu'):
     if pretrained:
         if mode == 'Real':
             return model.transform
         else:
-            return torchvision.transforms.Compose([t for t in model.transform.transforms if not isinstance(t, transforms.ToTensor)])
+            layers = []
+            for t in model.transform.transforms:
+                if isinstance(t, (transforms.Resize, transforms.CenterCrop)):
+                    mode = ""
+                    if t.interpolation == torchvision.transforms.InterpolationMode.BILINEAR:
+                        mode = 'bilinear'
+                    elif t.interpolation == torchvision.transforms.InterpolationMode.NEAREST:
+                        mode = 'nearest'
+                    elif t.interpolation == torchvision.transforms.InterpolationMode.BICUBIC:
+                        mode = 'bicubic'
+                    else:
+                        raise ValueError(f'Invalid interpolation mode: {t.interpolation}')
+                    layers.append(Upscale(t.size, mode=mode))
+                elif isinstance(t, transforms.Normalize):
+                    layers.append(Normalize(t.mean, t.std))
+                else:
+                    print(f'Warning: Ignoring transform {t}')
+            return Composite(layers).to(device)
     else:
         if mode == 'Real':
             return torchvision.transforms.Compose([transforms.ToTensor()] + [t for t in model.transform.transforms if isinstance(t, transforms.Normalize)])
         else:
-            return torchvision.transforms.Compose([t for t in model.transform.transforms if isinstance(t, transforms.Normalize)])
+            layers = []
+            for t in model.transform.transforms:
+                if isinstance(t, (transforms.Resize, transforms.CenterCrop)):
+                    mode = ""
+                    if t.interpolation == torchvision.transforms.InterpolationMode.BILINEAR:
+                        mode = 'bilinear'
+                    elif t.interpolation == torchvision.transforms.InterpolationMode.NEAREST:
+                        mode = 'nearest'
+                    elif t.interpolation == torchvision.transforms.InterpolationMode.BICUBIC:
+                        mode = 'bicubic'
+                    else:
+                        raise ValueError(f'Invalid interpolation mode: {t.interpolation}')
+                    layers.append(Upscale(t.size, mode=mode))
+                elif isinstance(t, transforms.Normalize):
+                    layers.append(Normalize(t.mean, t.std))
+                else:
+                    print(f'Warning: Ignoring transform {t}')
+            return Composite(layers).to(device)
+    
+
 
 class DatasetLoader():
     def __init__(self, dataset, batch_size, shuffle=True, drop_last=False, collate_fn=diff_stack):
@@ -474,7 +547,25 @@ class TransformLoader():
     def __iter__(self):
         for batch in self.dataloader:
             data, target, *rest = batch
-            data = torch.stack([self.transform(d) for d in data]).to(self.device)
+            data = self.transform(torch.stack([d for d in data]).to(self.device))
+            target = target.to(self.device)
+            yield data, target, *rest
+        
+    def __len__(self):
+        return len(self.dataloader)
+    
+class ImageLoader():
+    def __init__(self, dataloader, transform, device="cuda"):
+        self.dataloader = dataloader
+        self.transform = transform
+        self.batch_size = dataloader.batch_size
+        self.device = device
+
+
+    def __iter__(self):
+        for batch in self.dataloader:
+            data, target, *rest = batch
+            data = torch.stack([self.transform(d).to(self.device) for d in data])
             target = target.to(self.device)
             yield data, target, *rest
         
