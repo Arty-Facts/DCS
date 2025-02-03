@@ -8,11 +8,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 import ood_detectors.likelihood as likelihood
+import ood_detectors.residual as residual
 import seaborn as sns
+from torch.autograd import gradcheck
 
+PREFIX = "ood_distence_generation_guide"
 
-
-def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True, names=None):
+def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True, names=None, extra=None):
     if verbose:
         print('Generating plots...')
 
@@ -47,6 +49,11 @@ def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True,
         sns.kdeplot(data=score_ood, bw_adjust=.2, ax=ax, label=f'{index}: {np.mean(score_ood):.2f}')
         add_shadow(ax, score_ood)
 
+    if extra is not None:
+        for name, value in extra:
+            ax.axvline(value, color='black', linestyle=':', linewidth=2.5)
+            ax.text(value, 0, name, rotation=90, verticalalignment='bottom', horizontalalignment='center')
+
     ax.set_title('Density Plots')
     ax.set_xlabel('bits/dim')
     ax.set_ylabel('Density')
@@ -58,6 +65,7 @@ def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True,
     out_dir = pathlib.Path(out_dir) / dataset
     out_dir.mkdir(exist_ok=True, parents=True)
     filename = f"{tile}.svg"
+    # print(f"Saving figure to {out_dir / filename}")
     plt.savefig(out_dir / filename, bbox_inches='tight')
 
 def unnormalize(x):
@@ -95,7 +103,6 @@ def main():
 
     data = utils.get_dataset(dataset, data_path, None)
     anchors = utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt')
-    generator, mean, std = utils.load_generator(*anchors[2:], weight_path)
     train_img = data["train"]
     anchor_emb = anchors[0]
     label = anchors[1]
@@ -181,17 +188,18 @@ def main():
     ax.legend()
     plt.savefig(f"pca_{dataset}_{encoder_name}_{generator_name}.svg")
 
-    ood_detectors = [likelihood.RDM(embedding_size).to("cpu") for _ in range(10)]
+    # ood_detectors = [likelihood.RDM(embedding_size).to("cpu") for _ in range(10)]
+    ood_detectors = [residual.Residual(0.3) for _ in range(10)]
     print("Fitting OOD Detectors")
     for i, ood_detector in tqdm.tqdm(list(enumerate(ood_detectors))):
-        if pathlib.Path(checkpoint_path/f"ood_detector_{dataset}_{encoder_name}_{generator_name}_{i}.pt").exists() and not clean:
-            ood_detector.load_state_dict(torch.load(checkpoint_path/f"ood_detector_{dataset}_{encoder_name}_{generator_name}_{i}.pt", weights_only=False))
+        if pathlib.Path(checkpoint_path/f"{ood_detector.name}_{dataset}_{encoder_name}_{generator_name}_{i}.pt").exists() and not clean:
+            ood_detector.load_state_dict(torch.load(checkpoint_path/f"{ood_detector.name}_{dataset}_{encoder_name}_{generator_name}_{i}.pt", weights_only=False))
             print(f"OOD Detector {i} Loaded")
         else:
             ood_detector.to(device)
             ood_detector.fit(real_emb[i], batch_size=1000, n_epochs=1000, verbose=False)
             ood_detector.to("cpu")
-            torch.save(ood_detector.state_dict(), checkpoint_path/f"ood_detector_{dataset}_{encoder_name}_{generator_name}_{i}.pt")
+            torch.save(ood_detector.state_dict(), checkpoint_path/f"{ood_detector.name}_{dataset}_{encoder_name}_{generator_name}_{i}.pt")
             print(f"OOD Detector {i} Fitted")
     scores_real = torch.zeros((10, 10, 5000))
     scores_gen = torch.zeros((10, 10, 5000))
@@ -199,30 +207,31 @@ def main():
     print("Calculating Scores")
     for i, ood_detector in tqdm.tqdm(list(enumerate(ood_detectors))):
         for index in range(10):
-            if pathlib.Path(checkpoint_path / f'score_real_{i}_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
-                scores_real[i][index] = torch.load(checkpoint_path / f'score_real_{i}_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
+            if pathlib.Path(checkpoint_path / f'score_real_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
+                scores_real[i][index] = torch.load(checkpoint_path / f'score_real_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
             else:
                 ood_detector.to(device)
-                score_real = ood_detector.predict(real_emb[index], batch_size=2048, verbose=False)
+                score_real = ood_detector.predict(real_emb[index], batch_size=1000, verbose=False)
                 ood_detector.to("cpu")
                 score_real = torch.from_numpy(score_real)
-                torch.save(score_real, checkpoint_path / f'score_real_{i}_{index}_{dataset}_{encoder_name}.pt')
+                torch.save(score_real, checkpoint_path / f'score_real_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt')
                 scores_real[i][index] = score_real
-            if pathlib.Path(checkpoint_path / f'score_gen_{i}_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
-                scores_gen[i][index] = torch.load(checkpoint_path / f'score_gen_{i}_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
+            if pathlib.Path(checkpoint_path / f'score_gen_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
+                scores_gen[i][index] = torch.load(checkpoint_path / f'score_gen_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt', weights_only=False)
             else:
                 ood_detector.to(device)
-                score_gen = ood_detector.predict(gen_emb[index], batch_size=2048, verbose=False)
+                score_gen = ood_detector.predict(gen_emb[index], batch_size=1000, verbose=False)
                 score_gen = torch.from_numpy(score_gen)
                 ood_detector.to("cpu")
-                torch.save(score_gen, checkpoint_path / f'score_gen_{i}_{index}_{dataset}_{encoder_name}.pt')
+                torch.save(score_gen, checkpoint_path / f'score_gen_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt')
                 scores_gen[i][index] = score_gen
 
     print("Plotting")
     for i in range(10):
         ood_scores = [scores_real[i][j].numpy() for j in range(10) if j != i] + [scores_gen[i][j].numpy() for j in range(10) if j != i]
         names = [f"{j} Real" for j in range(10) if j != i] + [f"{j} Gen" for j in range(10) if j != i]
-        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores, dataset, f"{encoder_name}_{generator_name}_{i}", names=names)
+
+        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores, dataset, f"{PREFIX}_disp_plot_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}", names=names)
         samples = 10
         sorted_index_real = torch.argsort(scores_real[i][i])
         sorted_index_gen = torch.argsort(scores_gen[i][i])
@@ -233,7 +242,30 @@ def main():
         images_real_sample = [real_images[i][index] for index in indexs_real]
         images_gen_sample = [gen_images[i][index] for index in indexs_gen]
 
-        fig, ax = plt.subplots(2, samples, figsize=(samples*2, 5))
+        curr_data = data_blob[i]
+        images, labels, embeddings = zip(*curr_data)
+        embed = torch.stack(embeddings).clone()
+        labels = torch.tensor(labels)
+
+        for p in embed:
+            p.requires_grad_(True)
+
+        for encoder_param in encoder.parameters():
+            encoder_param.requires_grad_(True)
+
+        optimizer = torch.optim.Adam([embed], lr=1e-3)
+        loss_func = ood_detectors[i]
+
+
+        loss_func.to(device)
+        update_anchors(embed, labels, optimizer, 1000, loss_func, generator_name, config, weight_path, encoder, num_workers, batch_size, device)
+
+
+
+        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores,  dataset, f"{PREFIX}_tuned_disp_plot_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}_gen", names=names)
+
+
+        fig, ax = plt.subplots(3, samples, figsize=(samples*2, 5))
         for j in range(samples):
             ax[0, j].imshow(images_real_sample[j].permute(1, 2, 0))
             ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
@@ -241,20 +273,29 @@ def main():
             ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
             ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
             ax[1, j].axis('off')
-        plt.savefig(f"figs/{dataset}/sample_{encoder_name}_{generator_name}_{i}.svg")
-
+            ax[2, j].imshow(gen_images[j].permute(1, 2, 0))
+            ax[2, j].set_title(f"Gen Tuned {ood_scores[j]:.2f}")
+            ax[2, j].axis('off')
+        plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}.svg")
+        
 
         
 
 
-        
+def update_anchors(anchors, lables, optimizer, epochs, loss_func, generator_name, config, weight_path, encoder, num_workers, batch_size, device):
+    gen_loader = utils.TransformLoader(utils.GeneratorDatasetLoader(anchors, lables, generator_name, config, weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size, device=device, use_cache=False), utils.get_transforms(encoder, 'Encoder'), device=device)
+    for epoch in tqdm.tqdm(range(epochs)):
+        losses = []
+        for (gen_img, li, index) in gen_loader:
+            optimizer.zero_grad()
+            gen_emb = encoder(gen_img)
+            ood_loss = loss_func(gen_emb)
+            ood_loss = ood_loss.mean()
+            ood_loss.backward()
+            optimizer.step()
+            losses.append(ood_loss.item())
+        print(f"Epoch {epoch} Loss: {sum(losses)/len(losses)}")
 
-
-
-
-            
-
-    
 
 if __name__ == "__main__":
     main()
