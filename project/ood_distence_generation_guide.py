@@ -11,6 +11,7 @@ import ood_detectors.likelihood as likelihood
 import ood_detectors.residual as residual
 import seaborn as sns
 from torch.autograd import gradcheck
+import torchvision
 
 PREFIX = "odgg"
 
@@ -84,7 +85,7 @@ def main():
     dataset = 'CIFAR10'
     model_name = "resnet18.a1_in1k"
     exp = 0
-    batch_size = 64
+    batch_size = 32
     num_workers = 0
     clean = False
 
@@ -134,7 +135,7 @@ def main():
             images = list(zip(images, labels, indexs))
             labels = torch.tensor(labels)
 
-            real_loader = utils.ImageLoader(torch.utils.data.DataLoader(images, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack), utils.get_transforms(encoder, 'Real').to(device), device=device)
+            real_loader = utils.ImageLoader(torch.utils.data.DataLoader(images, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack), utils.get_transforms(encoder, 'Real'), device=device)
 
             for (real_img, li, index) in real_loader:
                 for idx, ri in zip(index, real_img):
@@ -238,35 +239,32 @@ def main():
         indexs_real = sorted_index_real[torch.linspace(0, 5000-1, samples).to(torch.long)]
         indexs_gen = sorted_index_gen[torch.linspace(0, 5000-1, samples).to(torch.long)]
         scores_real_sample = scores_real[i][i][indexs_real]
-        scores_gen_sample = scores_gen[i][i][indexs_gen]
+        scores_gen_sample = scores_gen[i][i][indexs_real]
         images_real_sample = [real_images[i][index] for index in indexs_real]
-        images_gen_sample = [gen_images[i][index] for index in indexs_gen]
+        images_gen_sample = [gen_images[i][index] for index in indexs_real]
 
         curr_data = data_blob[i]
         images, labels, embeddings = zip(*curr_data)
         embed = torch.stack(embeddings).clone()
+        original = embed.clone()
         imdexs = list(range(len(images)))
         images = list(zip(images, labels, imdexs))
         labels = torch.tensor(labels)
         
 
-        for p in embed:
-            p.requires_grad_(True)
-
-        optimizers = [torch.optim.Adam([p], lr=1e-3) for p in embed]
         loss_func = ood_detectors[i]
 
 
         loss_func.to(device)
         generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=False)
-        update_epoch = 10
-        images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, optimizers, update_epoch, loss_func, generator, encoder, batch_size, device)
+        update_epoch = 5
+        images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, batch_size, device)
         names = [f"epoch_{i}" for i in range(update_epoch)]
 
         plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores,  dataset, f"{PREFIX}_tuned_disp_plot_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}_gen", names=names)
-        scores_gen_sample_updated = [ood_scores[-1][j] for j in indexs_gen]
+        scores_gen_sample_updated = ood_scores[-1][indexs_real]
 
-        fig, ax = plt.subplots(3, samples, figsize=(samples*2, 5))
+        fig, ax = plt.subplots(4, samples, figsize=(samples*2, 10))
         for j in range(samples):
             ax[0, j].imshow(images_real_sample[j].permute(1, 2, 0))
             ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
@@ -274,18 +272,36 @@ def main():
             ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
             ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
             ax[1, j].axis('off')
-            ax[2, j].imshow(images_gen_sample_updated[j].permute(1, 2, 0))
+            ax[2, j].imshow(images_gen_sample_updated[indexs_real[j]].permute(1, 2, 0))
             ax[2, j].set_title(f"Gen Tuned {scores_gen_sample_updated[j]:.2f}")
             ax[2, j].axis('off')
+            diff = (images_gen_sample_updated[indexs_real[j]] - images_gen_sample[j]).abs()
+            # diff = diff - diff.min()
+            # diff = diff / diff.max()
+            ax[3, j].imshow(diff.permute(1, 2, 0))
+            ax[3, j].set_title(f"Diff")
+            ax[3, j].axis('off')
+
         plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}.svg")
         
-
+        # print(f"enbedding diff {(embed - original).abs().sum()}")
         
 
 
-def update_anchors(anchors, images, lables, optimizers, epochs, loss_func, generator, encoder, batch_size, device):
+def update_anchors(anchors, images, lables, epochs, loss_func, generator, encoder, batch_size, device):
+    learnable = [torch.nn.Parameter(a.clone().to(device)) for a in anchors]
+    lables = lables.to(device)
+
+    for p in learnable:
+        p.requires_grad = True
+
+    optimizers = [torch.optim.Adam([p], lr=1e-2) for p in learnable]
     real_trasform = utils.get_transforms(encoder, 'Real')
     gen_transform = utils.get_transforms(encoder, 'Encoder').to(device)
+    mean = torch.tensor([0.485, 0.456, 0.406])
+    std = torch.tensor([0.229, 0.224, 0.225])
+    # real_trasform = lambda x: (torchvision.transforms.functional.pil_to_tensor(x).to(dtype=torch.float32, device=device)) / 255
+    # gen_transform = lambda x: x
 
     out_images = [None]*len(anchors)
     losses = []
@@ -299,23 +315,42 @@ def update_anchors(anchors, images, lables, optimizers, epochs, loss_func, gener
             index_batch = index_to_update[index_batch]
             for index in index_batch:
                 optimizers[index].zero_grad()
-            x = torch.stack([anchors[index].to(device) for index in index_batch])
-            y = torch.stack([lables[index].to(device) for index in index_batch])
+            x = torch.stack([learnable[index] for index in index_batch])
+            y = torch.stack([lables[index] for index in index_batch])
             gen_images = generator.generate(x, y)
             gen_images = gen_transform(gen_images)
             # real_images = torch.stack([real_trasform(images[i][0]) for i in index_batch]).to(x.device)
+            # image_grid = (torchvision.utils.make_grid(gen_images.detach().cpu(), nrow=8) * std.view(3, 1, 1) + mean.view(3, 1, 1))
+            # fig, ax = plt.subplots(1, 2, figsize=(20, 10))
+            # ax[0].imshow(image_grid.permute(1, 2, 0))
+            # image_grid = (torchvision.utils.make_grid(real_images.detach().cpu(), nrow=8) * std.view(3, 1, 1) + mean.view(3, 1, 1))
+            # ax[1].imshow(image_grid.permute(1, 2, 0))
+            # plt.savefig(f"figs/{PREFIX}_gen_{epoch}.png")
+            # exit()
+
+            # batch_image_loss = (real_images - gen_images).abs().mean((1, 2, 3))
+            # batch_gen_embs = encoder(gen_images)
+            # batch_real_embs = encoder(real_images)
+            # batch_emb_loss = (batch_gen_embs - batch_real_embs).abs().mean(1)
+            # batch_loss = batch_image_loss + batch_emb_loss
+
+            # batch_loss = batch_image_loss
+
             batch_embs = encoder(gen_images)
             batch_loss = loss_func(batch_embs)
-            tot_loss = batch_loss.sum()
-            tot_loss.backward()
+            # print(batch_loss.shape)
+            batch_loss.sum().backward()
             for index, loss, img in zip(index_batch, batch_loss, gen_images):
                 optimizers[index].step()
                 epoch_loss += loss.item()
-                out_images[index] = resize(unnormalize(img.detach().cpu()), (64, 64))
+                out_images[index] = resize(unnormalize(img.detach()).cpu(), (64, 64))
+                # out_images[index] = resize(img.detach().cpu(), (64, 64))
                 losses[-1][index] = loss.item()
         epoch_loss /= len(index_to_update)
         print(f"Epoch {epoch} Loss: {epoch_loss}")
-    return out_images, losses
+    for l, a in zip(learnable, anchors):
+        a.copy_(l.data)
+    return out_images, np.array(losses)
 
        
 
