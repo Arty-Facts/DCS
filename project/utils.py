@@ -480,7 +480,6 @@ class GeneratorDatasetLoader():
                 for i, img in zip(index, imgs):
                     self.cache[i] = img
             self.cache = torch.stack(self.cache, dim=0)
-            self.generator.to('cpu')
             print('Done!')
         self.generator.requires_grad_(generator_grad)
         if not self.use_cache:

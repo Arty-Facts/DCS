@@ -123,7 +123,7 @@ def train_baseline_conf(conf):
     return result
 
 
-def get_baseline_model(conf):
+def get_baseline_model(conf, pre_trained=True):
     dataset = conf['dataset']
     device = conf['device']
     exp = conf['exp']
@@ -138,6 +138,8 @@ def get_baseline_model(conf):
     id = conf['id']
     real_data = utils.get_dataset(dataset, data_path)
     model = TimmModel(model_name, real_data['num_classes'], drop_rate=drop_rate, pretrained=pretrained).to(device)
+    if not pre_trained:
+        return model
 
     model_path = checkpoint_path / f"{dataset}/{model.name}/pretrained_{pretrained}/{experiment}/{mode}_exp{exp}_{id}.pt"
     if model_path.exists():

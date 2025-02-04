@@ -14,6 +14,8 @@ from torch.autograd import gradcheck
 import torchvision
 from baseline_model import get_baseline_model
 import yaml
+import project.augmentations as aug_lib
+import functools
 
 PREFIX = "odnlggds"
 
@@ -118,9 +120,13 @@ def main():
     with open(baseline_model_config_path, 'r') as f:
         baseline_model_config = yaml.safe_load(f)
     
-    base_model = get_baseline_model(baseline_model_config)
+    base_model = get_baseline_model(baseline_model_config, pre_trained=False)
     base_model.to(device)
-    base_model.eval()
+    base_model.train()
+
+    controlle_model = get_baseline_model(baseline_model_config, pre_trained=False)
+    controlle_model.to(device)
+    controlle_model.train()
     
 
     real_emb = torch.zeros((10, 5000, embedding_size))
@@ -238,64 +244,151 @@ def main():
                 torch.save(score_gen, checkpoint_path / f'score_gen_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt')
                 scores_gen[i][index] = score_gen
 
-    print("Plotting")
-    generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=False)
+    print("Tuning Anchors")
+    aug = functools.partial(aug_lib.diff_augment, strategy="color_crop_cutout_flip_scale_rotate", param=aug_lib.ParamDiffAug())
+    eval_data = torch.utils.data.DataLoader(data['test'], batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack)
+    eval_loader = utils.ImageLoader(eval_data, utils.get_transforms(encoder, 'Real', False), device=device)
+    generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=True, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=True)
+    dynamic_generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=True, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=False)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    controlle_optimizer = torch.optim.Adam(controlle_model.parameters(), lr=1e-4)
+    controlle_model.to(device)
+
+    base_optmizer = torch.optim.Adam(base_model.parameters(), lr=1e-4)
+    base_model.to(device)
+
+    all_emb = []
+    all_images = []
+    all_labels = []
     for i in range(10):
-        ood_scores = [scores_real[i][j].numpy() for j in range(10) if j != i] + [scores_gen[i][j].numpy() for j in range(10) if j != i]
-        names = [f"{j} Real" for j in range(10) if j != i] + [f"{j} Gen" for j in range(10) if j != i]
+        img, label, emb = zip(*data_blob[i])
+        all_emb.append(torch.stack(emb).clone())
+        all_images.append(img)
+        all_labels.append(torch.tensor(label))
 
-        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores, dataset, f"{PREFIX}_disp_plot_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}", names=names)
-        samples = 10
-        sorted_index_real = torch.argsort(scores_real[i][i])
-        sorted_index_gen = torch.argsort(scores_gen[i][i])
-        indexs_real = sorted_index_real[torch.linspace(0, 5000-1, samples).to(torch.long)]
-        indexs_gen = sorted_index_gen[torch.linspace(0, 5000-1, samples).to(torch.long)]
-        scores_real_sample = scores_real[i][i][indexs_real]
-        scores_gen_sample = scores_gen[i][i][indexs_real]
-        images_real_sample = [real_images[i][index] for index in indexs_real]
-        images_gen_sample = [gen_images[i][index] for index in indexs_real]
+    base_train_losses = []
+    base_train_accs = []
+    controlle_train_losses = []
+    controlle_train_accs = []
 
-        curr_data = data_blob[i]
-        images, labels, embeddings = zip(*curr_data)
-        embed = torch.stack(embeddings).clone()
-        original = embed.clone()
-        imdexs = list(range(len(images)))
-        images = list(zip(images, labels, imdexs))
-        labels = torch.tensor(labels)
+    base_test_losses = []
+    base_test_accs = []
+    controlle_test_losses = []
+    controlle_test_accs = []
+
+    num_epochs = 100
+
+
+    epoch_iter = tqdm.trange(num_epochs, desc=mode)
+    for epoch in epoch_iter:
+        fig, ax1 = plt.subplots(4, 1, figsize=(20, 20))
+        epoch_iter.set_description(f"Epoch {epoch} - training controlle")
+        controlle_model.train()
+        controlle_train_acc, controlle_train_loss = utils.train(controlle_model, generator, controlle_optimizer, criterion, aug=aug)
+        controlle_train_losses.append(controlle_train_loss)
+        controlle_train_accs.append(controlle_train_acc)
+
+        dynamic_generator.anchors = torch.concatenate(all_emb).to(device)
+        dynamic_generator.labels = torch.concatenate(all_labels).to(device)
+        epoch_iter.set_description(f"Epoch {epoch} - training base")
+        base_model.train()
+        base_train_acc, base_train_loss = utils.train(base_model, dynamic_generator, base_optmizer, criterion, aug=aug)
+        base_train_losses.append(base_train_loss)
+        base_train_accs.append(base_train_acc)
+
+        epoch_iter.set_description(f"Epoch {epoch} - testing controlle")
+        controlle_model.eval()
+        controlle_test_acc_tmp, controlle_test_loss = utils.test(controlle_model, eval_loader, criterion)
+        controlle_test_losses.append(controlle_test_loss)
+        controlle_test_accs.append(controlle_test_acc_tmp)
+
+        epoch_iter.set_description(f"Epoch {epoch} - testing base")
+        base_model.eval()
+        base_test_acc_tmp, base_test_loss = utils.test(base_model, eval_loader, criterion)
+        base_test_losses.append(base_test_loss)
+        base_test_accs.append(base_test_acc_tmp)
+
+        ax1[0].plot(base_train_losses, label="Base Train Loss")
+        ax1[0].plot(controlle_train_losses, label="Controlle Train Loss")
+        ax1[0].set_title("Train Loss")
+        ax1[0].legend()
+        ax1[0].set_xlabel("Epoch")
+        ax1[0].set_ylabel("Loss")
+
+        ax1[1].plot(base_train_accs, label="Base Train Acc")
+        ax1[1].plot(controlle_train_accs, label="Controlle Train Acc")
+        ax1[1].set_title("Train Acc")
+        ax1[1].legend()
+        ax1[1].set_xlabel("Epoch")
+        ax1[1].set_ylabel("Acc")
+
+        ax1[2].plot(base_test_losses, label="Base Test Loss")
+        ax1[2].plot(controlle_test_losses, label="Controlle Test Loss")
+        ax1[2].set_title("Test Loss")
+        ax1[2].legend()
+        ax1[2].set_xlabel("Epoch")
+        ax1[2].set_ylabel("Loss")
+
+        ax1[3].plot(base_test_accs, label="Base Test Acc")
+        ax1[3].plot(controlle_test_accs, label="Controlle Test Acc")
+        ax1[3].set_title("Test Acc")
+        ax1[3].legend()
+        ax1[3].set_xlabel("Epoch")
+        ax1[3].set_ylabel("Acc")
+        plt.savefig(f"figs/{dataset}/{PREFIX}_train_{encoder_name}_{generator_name}.png")
+
+        epoch_iter.set_description(f"updating anchors")
+        for i in range(10):
+            samples = 10
+            sorted_index_real = torch.argsort(scores_real[i][i])
+            indexs_real = sorted_index_real[torch.linspace(0, 5000-1, samples).to(torch.long)]
+            scores_real_sample = scores_real[i][i][indexs_real]
+            scores_gen_sample = scores_gen[i][i][indexs_real]
+            images_real_sample = [real_images[i][index] for index in indexs_real]
+            images_gen_sample = [gen_images[i][index] for index in indexs_real]
+
+            images = all_images[i]
+            embed = all_emb[i]
+            labels = all_labels[i]
+            imdexs = list(range(len(images)))
+            images = list(zip(images, labels, imdexs))
+            
+
+            loss_func = ood_detectors[i]
+
+
+            loss_func.to(device)
+            real_mean, real_std = scores_real[i].mean(), scores_real[i].std()
+            threshold = real_mean + 2*real_std
+            update_epoch = 2
+            images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, base_model, threshold, batch_size, device)
+            scores_gen_sample_updated = ood_scores[-1][indexs_real]
+
+            fig, ax = plt.subplots(4, samples, figsize=(samples*2, 10))
+            for j in range(samples):
+                ax[0, j].imshow(images_real_sample[j].permute(1, 2, 0))
+                ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
+                ax[0, j].axis('off')
+                ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
+                ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
+                ax[1, j].axis('off')
+                ax[2, j].imshow(images_gen_sample_updated[indexs_real[j]].permute(1, 2, 0))
+                ax[2, j].set_title(f"Gen Tuned {scores_gen_sample_updated[j]:.2f}")
+                ax[2, j].axis('off')
+                diff = (images_gen_sample_updated[indexs_real[j]] - images_gen_sample[j]).abs()
+                # diff = diff - diff.min()
+                # diff = diff / diff.max()
+                ax[3, j].imshow(diff.permute(1, 2, 0))
+                ax[3, j].set_title(f"Diff")
+                ax[3, j].axis('off')
+
+            plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}_{epoch}.png")
+            plt.close()
         
-
-        loss_func = ood_detectors[i]
-
-
-        loss_func.to(device)
-        real_mean, real_std = scores_real[i].mean(), scores_real[i].std()
-        threshold = real_mean + 2*real_std
-        update_epoch = 5
-        images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, base_model, threshold, batch_size, device)
-        names = [f"epoch_{i}" for i in range(1, update_epoch)]
-        plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores[1:],  dataset, f"{PREFIX}_tuned_disp_plot_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}_gen", names=names)
-        scores_gen_sample_updated = ood_scores[-1][indexs_real]
-
-        fig, ax = plt.subplots(4, samples, figsize=(samples*2, 10))
-        for j in range(samples):
-            ax[0, j].imshow(images_real_sample[j].permute(1, 2, 0))
-            ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
-            ax[0, j].axis('off')
-            ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
-            ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
-            ax[1, j].axis('off')
-            ax[2, j].imshow(images_gen_sample_updated[indexs_real[j]].permute(1, 2, 0))
-            ax[2, j].set_title(f"Gen Tuned {scores_gen_sample_updated[j]:.2f}")
-            ax[2, j].axis('off')
-            diff = (images_gen_sample_updated[indexs_real[j]] - images_gen_sample[j]).abs()
-            # diff = diff - diff.min()
-            # diff = diff / diff.max()
-            ax[3, j].imshow(diff.permute(1, 2, 0))
-            ax[3, j].set_title(f"Diff")
-            ax[3, j].axis('off')
-
-        plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}.svg")
+        epoch_iter.set_postfix(controlle_test_acc=f"{controlle_test_acc_tmp*100:.1f}%", base_test_acc=f"{base_test_acc_tmp*100:.1f}%", controlle_test_loss=f"{controlle_test_loss:.4f}", base_test_loss=f"{base_test_loss:.4f}")
         
+            
         # print(f"enbedding diff {(embed - original).abs().sum()}")
         
 
@@ -318,7 +411,7 @@ def update_anchors(anchors, images, lables, epochs, loss_func, generator, encode
     out_images = [None]*len(anchors)
     losses = []
 
-    for epoch in tqdm.tqdm(range(epochs)):
+    for epoch in range(epochs):
         index_to_update = torch.arange(len(anchors))
         shuffled_index = torch.randperm(len(index_to_update))
         epoch_loss = 0
@@ -363,7 +456,7 @@ def update_anchors(anchors, images, lables, epochs, loss_func, generator, encode
                 # out_images[index] = resize(img.detach().cpu(), (64, 64))
                 losses[-1][index] = ood_loss.item()
         epoch_loss /= len(index_to_update)
-        print(f"Epoch {epoch} Loss: {epoch_loss}")
+        # print(f"Epoch {epoch} Loss: {epoch_loss}")
     for l, a in zip(learnable, anchors):
         a.copy_(l.data)
     return out_images, np.array(losses)
