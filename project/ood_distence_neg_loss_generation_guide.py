@@ -12,8 +12,10 @@ import ood_detectors.residual as residual
 import seaborn as sns
 from torch.autograd import gradcheck
 import torchvision
+from baseline_model import get_baseline_model
+import yaml
 
-PREFIX = "odgg"
+PREFIX = "odnlgg"
 
 def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True, names=None, extra=None):
     if verbose:
@@ -85,7 +87,7 @@ def main():
     dataset = 'CIFAR10'
     model_name = "resnet18.a1_in1k"
     exp = 0
-    batch_size = 32
+    batch_size = 8
     num_workers = 0
     clean = False
 
@@ -111,6 +113,15 @@ def main():
     config = anchors[3]
 
     data_blob = defaultdict(list)
+
+    baseline_model_config_path = 'project/config_baseline.yaml'
+    with open(baseline_model_config_path, 'r') as f:
+        baseline_model_config = yaml.safe_load(f)
+    
+    base_model = get_baseline_model(baseline_model_config)
+    base_model.to(device)
+    base_model.eval()
+    
 
     real_emb = torch.zeros((10, 5000, embedding_size))
     gen_emb = torch.zeros((10, 5000, embedding_size))
@@ -256,11 +267,12 @@ def main():
 
 
         loss_func.to(device)
+        real_mean, real_std = scores_real[i].mean(), scores_real[i].std()
+        threshold = real_mean + 2*real_std
         generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=False, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=False)
         update_epoch = 5
-        images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, batch_size, device)
+        images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, base_model, threshold, batch_size, device)
         names = [f"epoch_{i}" for i in range(1, update_epoch)]
-
         plot(scores_real[i][i].numpy(), scores_gen[i][i].numpy(), ood_scores[1:],  dataset, f"{PREFIX}_tuned_disp_plot_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}_gen", names=names)
         scores_gen_sample_updated = ood_scores[-1][indexs_real]
 
@@ -288,10 +300,10 @@ def main():
         
 
 
-def update_anchors(anchors, images, lables, epochs, loss_func, generator, encoder, batch_size, device):
+def update_anchors(anchors, images, lables, epochs, loss_func, generator, encoder, base_model, batch_size, threshold, device):
     learnable = [torch.nn.Parameter(a.clone().to(device)) for a in anchors]
     lables = lables.to(device)
-
+    logit_loss = torch.nn.CrossEntropyLoss(reduction='none')
     for p in learnable:
         p.requires_grad = True
 
@@ -335,17 +347,21 @@ def update_anchors(anchors, images, lables, epochs, loss_func, generator, encode
             # batch_loss = batch_image_loss + batch_emb_loss
 
             # batch_loss = batch_image_loss
+            logits = base_model(gen_images)
+            batch_logit_loss = logit_loss(logits, y)
+            # batch_loss = -batch_logit_loss
 
             batch_embs = encoder(gen_images)
-            batch_loss = loss_func(batch_embs)
+            batch_ood_loss = loss_func(batch_embs) 
+            batch_loss = batch_ood_loss / threshold - batch_logit_loss
             # print(batch_loss.shape)
             batch_loss.sum().backward()
-            for index, loss, img in zip(index_batch, batch_loss, gen_images):
+            for index, loss, img, ood_loss in zip(index_batch, batch_loss, gen_images, batch_ood_loss):
                 optimizers[index].step()
                 epoch_loss += loss.item()
                 out_images[index] = resize(unnormalize(img.detach()).cpu(), (64, 64))
                 # out_images[index] = resize(img.detach().cpu(), (64, 64))
-                losses[-1][index] = loss.item()
+                losses[-1][index] = ood_loss.item()
         epoch_loss /= len(index_to_update)
         print(f"Epoch {epoch} Loss: {epoch_loss}")
     for l, a in zip(learnable, anchors):

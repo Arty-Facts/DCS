@@ -334,32 +334,6 @@ def imge_stack(batch):
     targets = torch.tensor(target_tensors, dtype=torch.long)
     index = torch.tensor(index_tensors, dtype=torch.long)
     return data, targets, index
-
-class Upscale(torch.nn.Module):
-    def __init__(self, output_size, mode='bilinear'):
-        super().__init__()
-
-        self.model = torch.nn.Upsample(size=output_size, mode=mode)
-    def forward(self, img):
-        return self.model(img)
-    
-    def __repr__(self):
-        return f'Upscale({self.model.size}, mode={self.model.mode})'
-    
-class Normalize(torch.nn.Module):
-    def __init__(self, mean, std):
-        super().__init__()
-        self.mean = torch.tensor(mean, dtype=torch.float32)
-        self.std = torch.tensor(std, dtype=torch.float32)
-        self.mean = self.mean.view(1, -1, 1, 1)
-        self.std = self.std.view(1, -1, 1, 1)
-        self.mean = torch.nn.Parameter(self.mean, requires_grad=True)
-        self.std = torch.nn.Parameter(self.std, requires_grad=True)
-    def forward(self, img):
-        return (img - self.mean) / self.std
-    def __repr__(self):
-        return f'Normalize(mean={self.mean}, std={self.std})'
-    
 class Composite(torch.nn.Module):
     def __init__(self, transforms):
         super().__init__()
@@ -372,6 +346,22 @@ class Composite(torch.nn.Module):
     
     def __repr__(self):
         return f'Composite({self.transforms})'
+    
+def get_interpolation_mode(transform):
+    if isinstance(transform, transforms.Resize):
+        mode = ""
+        if transform.interpolation == torchvision.transforms.InterpolationMode.BILINEAR:
+            mode = 'bilinear'
+        elif transform.interpolation == torchvision.transforms.InterpolationMode.NEAREST:
+            mode = 'nearest'
+        elif transform.interpolation == torchvision.transforms.InterpolationMode.BICUBIC:
+            mode = 'bicubic'
+        else:
+            raise ValueError(f'Invalid interpolation mode: {transform.interpolation}')
+        return mode
+    else:
+        raise ValueError(f'Invalid transform: {transform}')
+    
 
 def get_transforms(model, mode, pretrained=True, device='cpu'):
     if pretrained:
@@ -380,19 +370,13 @@ def get_transforms(model, mode, pretrained=True, device='cpu'):
         else:
             layers = []
             for t in model.transform.transforms:
-                if isinstance(t, (transforms.Resize, transforms.CenterCrop)):
-                    mode = ""
-                    if t.interpolation == torchvision.transforms.InterpolationMode.BILINEAR:
-                        mode = 'bilinear'
-                    elif t.interpolation == torchvision.transforms.InterpolationMode.NEAREST:
-                        mode = 'nearest'
-                    elif t.interpolation == torchvision.transforms.InterpolationMode.BICUBIC:
-                        mode = 'bicubic'
-                    else:
-                        raise ValueError(f'Invalid interpolation mode: {t.interpolation}')
-                    layers.append(Upscale(t.size, mode=mode))
+                if isinstance(t, transforms.Resize):
+                    mode = get_interpolation_mode(t)
+                    layers.append(torch.nn.Upsample(size=t.size, mode=mode))
                 elif isinstance(t, transforms.Normalize):
-                    layers.append(Normalize(t.mean, t.std))
+                    layers.append(t)
+                elif isinstance(t, transforms.CenterCrop):
+                    layers.append(t)
                 else:
                     print(f'Warning: Ignoring transform {t}')
             return Composite(layers).to(device)
@@ -402,19 +386,13 @@ def get_transforms(model, mode, pretrained=True, device='cpu'):
         else:
             layers = []
             for t in model.transform.transforms:
-                if isinstance(t, (transforms.Resize, transforms.CenterCrop)):
-                    mode = ""
-                    if t.interpolation == torchvision.transforms.InterpolationMode.BILINEAR:
-                        mode = 'bilinear'
-                    elif t.interpolation == torchvision.transforms.InterpolationMode.NEAREST:
-                        mode = 'nearest'
-                    elif t.interpolation == torchvision.transforms.InterpolationMode.BICUBIC:
-                        mode = 'bicubic'
-                    else:
-                        raise ValueError(f'Invalid interpolation mode: {t.interpolation}')
-                    layers.append(Upscale(t.size, mode=mode))
+                if isinstance(t, transforms.Resize):
+                    mode = get_interpolation_mode(t)
+                    layers.append(torch.nn.Upsample(size=t.size, mode=mode))
                 elif isinstance(t, transforms.Normalize):
-                    layers.append(Normalize(t.mean, t.std))
+                    layers.append(t)
+                elif isinstance(t, transforms.CenterCrop):
+                    layers.append(t)
                 else:
                     print(f'Warning: Ignoring transform {t}')
             return Composite(layers).to(device)
