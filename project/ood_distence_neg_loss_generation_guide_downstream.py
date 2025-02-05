@@ -16,6 +16,7 @@ from baseline_model import get_baseline_model
 import yaml
 import project.augmentations as aug_lib
 import functools
+from project.train_logger import TrainingLogger
 
 PREFIX = "odnlggds"
 
@@ -120,14 +121,16 @@ def main():
     with open(baseline_model_config_path, 'r') as f:
         baseline_model_config = yaml.safe_load(f)
     
-    base_model = get_baseline_model(baseline_model_config, pre_trained=False)
-    base_model.to(device)
-    base_model.train()
+    our_model = get_baseline_model(baseline_model_config, pre_trained=False)
+    our_model.to(device)
 
     controlle_model = get_baseline_model(baseline_model_config, pre_trained=False)
     controlle_model.to(device)
-    controlle_model.train()
-    
+    controlle_model.load_state_dict(our_model.state_dict())
+
+    real_model = get_baseline_model(baseline_model_config, pre_trained=True)
+    real_model.to(device)
+    real_model.load_state_dict(our_model.state_dict())
 
     real_emb = torch.zeros((10, 5000, embedding_size))
     gen_emb = torch.zeros((10, 5000, embedding_size))
@@ -248,6 +251,8 @@ def main():
     aug = functools.partial(aug_lib.diff_augment, strategy="color_crop_cutout_flip_scale_rotate", param=aug_lib.ParamDiffAug())
     eval_data = torch.utils.data.DataLoader(data['test'], batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack)
     eval_loader = utils.ImageLoader(eval_data, utils.get_transforms(encoder, 'Real', False), device=device)
+    train_data = torch.utils.data.DataLoader(data['train'], batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=utils.imge_stack)
+    train_loader = utils.ImageLoader(train_data, utils.get_transforms(encoder, 'Real', False), device=device)
     generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=True, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=True)
     dynamic_generator = utils.GeneratorDatasetLoader(*utils.load_anchors(model_path / f'Base_ITGAN_{dataset}_exp{exp}.pt'), weight_path, shuffle=True, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=False)
 
@@ -255,8 +260,11 @@ def main():
     controlle_optimizer = torch.optim.Adam(controlle_model.parameters(), lr=1e-4)
     controlle_model.to(device)
 
-    base_optmizer = torch.optim.Adam(base_model.parameters(), lr=1e-4)
-    base_model.to(device)
+    our_optmizer = torch.optim.Adam(our_model.parameters(), lr=1e-4)
+    our_model.to(device)
+
+    real_optmizer = torch.optim.Adam(real_model.parameters(), lr=1e-4)
+    real_model.to(device)
 
     all_emb = []
     all_images = []
@@ -267,17 +275,17 @@ def main():
         all_images.append(img)
         all_labels.append(torch.tensor(label))
 
-    base_train_losses = []
-    base_train_accs = []
-    controlle_train_losses = []
-    controlle_train_accs = []
 
-    base_test_losses = []
-    base_test_accs = []
-    controlle_test_losses = []
-    controlle_test_accs = []
 
-    num_epochs = 100
+    num_epochs = 20
+    logger = TrainingLogger(f"{PREFIX}.db")
+    exp_id_real = logger.register_experiment(name="Real")
+    exp_id_contolle = logger.register_experiment(name="Controlle")
+    exp_id_our = logger.register_experiment(name="Our")
+
+    run_id_real = logger.get_next_run_id(exp_id_real)
+    run_id_contolle = logger.get_next_run_id(exp_id_contolle)
+    run_id_our = logger.get_next_run_id(exp_id_our)
 
 
     epoch_iter = tqdm.trange(num_epochs, desc=mode)
@@ -286,57 +294,34 @@ def main():
         epoch_iter.set_description(f"Epoch {epoch} - training controlle")
         controlle_model.train()
         controlle_train_acc, controlle_train_loss = utils.train(controlle_model, generator, controlle_optimizer, criterion, aug=aug)
-        controlle_train_losses.append(controlle_train_loss)
-        controlle_train_accs.append(controlle_train_acc)
-
-        dynamic_generator.anchors = torch.concatenate(all_emb).to(device)
-        dynamic_generator.labels = torch.concatenate(all_labels).to(device)
-        epoch_iter.set_description(f"Epoch {epoch} - training base")
-        base_model.train()
-        base_train_acc, base_train_loss = utils.train(base_model, dynamic_generator, base_optmizer, criterion, aug=aug)
-        base_train_losses.append(base_train_loss)
-        base_train_accs.append(base_train_acc)
 
         epoch_iter.set_description(f"Epoch {epoch} - testing controlle")
         controlle_model.eval()
-        controlle_test_acc_tmp, controlle_test_loss = utils.test(controlle_model, eval_loader, criterion)
-        controlle_test_losses.append(controlle_test_loss)
-        controlle_test_accs.append(controlle_test_acc_tmp)
+        controlle_test_acc, controlle_test_loss = utils.test(controlle_model, eval_loader, criterion)
 
-        epoch_iter.set_description(f"Epoch {epoch} - testing base")
-        base_model.eval()
-        base_test_acc_tmp, base_test_loss = utils.test(base_model, eval_loader, criterion)
-        base_test_losses.append(base_test_loss)
-        base_test_accs.append(base_test_acc_tmp)
+        logger.report_result(exp_id_contolle, run_id_contolle, epoch, controlle_train_loss, controlle_train_acc, controlle_test_loss, controlle_test_acc)
 
-        ax1[0].plot(base_train_losses, label="Base Train Loss")
-        ax1[0].plot(controlle_train_losses, label="Controlle Train Loss")
-        ax1[0].set_title("Train Loss")
-        ax1[0].legend()
-        ax1[0].set_xlabel("Epoch")
-        ax1[0].set_ylabel("Loss")
+        epoch_iter.set_description(f"Epoch {epoch} - training real")
+        real_model.train()
+        real_train_acc, real_train_loss = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
 
-        ax1[1].plot(base_train_accs, label="Base Train Acc")
-        ax1[1].plot(controlle_train_accs, label="Controlle Train Acc")
-        ax1[1].set_title("Train Acc")
-        ax1[1].legend()
-        ax1[1].set_xlabel("Epoch")
-        ax1[1].set_ylabel("Acc")
+        epoch_iter.set_description(f"Epoch {epoch} - testing real")
+        real_model.eval()
+        real_test_acc, real_test_loss = utils.test(real_model, eval_loader, criterion)
 
-        ax1[2].plot(base_test_losses, label="Base Test Loss")
-        ax1[2].plot(controlle_test_losses, label="Controlle Test Loss")
-        ax1[2].set_title("Test Loss")
-        ax1[2].legend()
-        ax1[2].set_xlabel("Epoch")
-        ax1[2].set_ylabel("Loss")
+        logger.report_result(exp_id_real, run_id_real, epoch, real_train_loss, real_train_acc, real_test_loss, real_test_acc)
 
-        ax1[3].plot(base_test_accs, label="Base Test Acc")
-        ax1[3].plot(controlle_test_accs, label="Controlle Test Acc")
-        ax1[3].set_title("Test Acc")
-        ax1[3].legend()
-        ax1[3].set_xlabel("Epoch")
-        ax1[3].set_ylabel("Acc")
-        plt.savefig(f"figs/{dataset}/{PREFIX}_train_{encoder_name}_{generator_name}.png")
+        dynamic_generator.anchors = torch.concatenate(all_emb).to(device)
+        dynamic_generator.labels = torch.concatenate(all_labels).to(device)
+        epoch_iter.set_description(f"Epoch {epoch} - training our")
+        our_model.train()
+        our_train_acc, our_train_loss = utils.train(our_model, dynamic_generator, our_optmizer, criterion, aug=aug)
+
+        epoch_iter.set_description(f"Epoch {epoch} - testing our")
+        our_model.eval()
+        our_test_acc, our_test_loss = utils.test(our_model, eval_loader, criterion)
+
+        logger.report_result(exp_id_our, run_id_our, epoch, our_train_loss, our_train_acc, our_test_loss, our_test_acc)
 
         epoch_iter.set_description(f"updating anchors")
         for i in range(10):
@@ -359,10 +344,11 @@ def main():
 
 
             loss_func.to(device)
-            real_mean, real_std = scores_real[i].mean(), scores_real[i].std()
+            real_mean, real_std = scores_real[i][i].mean(), scores_real[i][i].std()
             threshold = real_mean + 2*real_std
+            print(f"{i} Threshold {threshold:.2f}, Real Mean {real_mean:.2f}, Real Std {real_std:.2f}")
             update_epoch = 2
-            images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, base_model, threshold, batch_size, device)
+            images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, our_model, threshold, batch_size, device)
             scores_gen_sample_updated = ood_scores[-1][indexs_real]
 
             fig, ax = plt.subplots(4, samples, figsize=(samples*2, 10))
@@ -383,17 +369,17 @@ def main():
                 ax[3, j].set_title(f"Diff")
                 ax[3, j].axis('off')
 
-            plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{i}_{epoch}.png")
+            plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{epoch}_{i}.png")
             plt.close()
         
-        epoch_iter.set_postfix(controlle_test_acc=f"{controlle_test_acc_tmp*100:.1f}%", base_test_acc=f"{base_test_acc_tmp*100:.1f}%", controlle_test_loss=f"{controlle_test_loss:.4f}", base_test_loss=f"{base_test_loss:.4f}")
+        epoch_iter.set_postfix(controlle_test_acc=f"{controlle_test_acc*100:.1f}%", real_test_acc=f"{real_test_acc*100:.1f}%", our_test_acc=f"{our_test_acc*100:.1f}%")
         
             
         # print(f"enbedding diff {(embed - original).abs().sum()}")
         
 
 
-def update_anchors(anchors, images, lables, epochs, loss_func, generator, encoder, base_model, batch_size, threshold, device):
+def update_anchors(anchors, images, lables, epochs, loss_func, generator, encoder, our_model, batch_size, threshold, device):
     learnable = [torch.nn.Parameter(a.clone().to(device)) for a in anchors]
     lables = lables.to(device)
     logit_loss = torch.nn.CrossEntropyLoss(reduction='none')
@@ -440,13 +426,16 @@ def update_anchors(anchors, images, lables, epochs, loss_func, generator, encode
             # batch_loss = batch_image_loss + batch_emb_loss
 
             # batch_loss = batch_image_loss
-            logits = base_model(gen_images)
+            logits = our_model(gen_images)
             batch_logit_loss = logit_loss(logits, y)
             # batch_loss = -batch_logit_loss
 
             batch_embs = encoder(gen_images)
             batch_ood_loss = loss_func(batch_embs) 
+            all_above_threshold = batch_ood_loss > threshold
+
             batch_loss = batch_ood_loss / threshold - batch_logit_loss
+            batch_loss[all_above_threshold] = batch_ood_loss[all_above_threshold] / threshold + batch_logit_loss[all_above_threshold]
             # print(batch_loss.shape)
             batch_loss.sum().backward()
             for index, loss, img, ood_loss in zip(index_batch, batch_loss, gen_images, batch_ood_loss):
