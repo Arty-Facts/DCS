@@ -270,6 +270,7 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
     ax.set_xlabel('Epoch')
     ax.set_ylabel(metric)
     ax.set_title(f'{metric} over Epochs')
+    ax.grid(True)
     ax.legend()
 
 # Example usage:

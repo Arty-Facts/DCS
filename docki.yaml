@@ -52,3 +52,15 @@ python_dep:
     file: ./requirements.txt
 notebook_token: dcs
 notebook_password: dcs
+remote:
+  hosts:
+    - name: nuke
+      workspace: ~/DCS
+    - name: dust
+      workspace: ~/DCS
+    - name: mirage
+      workspace: ~/DCS
+    - name: aztec
+      workspace: ~/DCS
+    - name: inferno 
+      workspace: ~/DCS

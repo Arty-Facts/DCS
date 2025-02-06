@@ -20,6 +20,22 @@ from project.train_logger import TrainingLogger
 
 PREFIX = "odnlggds"
 
+class CombineDataLoader:
+    def __init__(self, loaders):
+        self.loaders = loaders
+        self.batch_size = loaders[0].batch_size
+    
+    def __iter__(self):
+        self.iterators = [iter(loader) for loader in self.loaders]
+        self.at_loader_index = 0
+        return self
+    
+    def __next__(self):
+        next_data =  next(self.iterators[self.at_loader_index])
+        self.at_loader_index = (self.at_loader_index + 1) % len(self.loaders)
+        return next_data
+
+
 def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True, names=None, extra=None):
     if verbose:
         print('Generating plots...')
@@ -128,9 +144,10 @@ def main():
     controlle_model.to(device)
     controlle_model.load_state_dict(our_model.state_dict())
 
-    real_model = get_baseline_model(baseline_model_config, pre_trained=True)
+    real_model = get_baseline_model(baseline_model_config, pre_trained=False)
     real_model.to(device)
     real_model.load_state_dict(our_model.state_dict())
+
 
     real_emb = torch.zeros((10, 5000, embedding_size))
     gen_emb = torch.zeros((10, 5000, embedding_size))
@@ -264,7 +281,6 @@ def main():
     our_model.to(device)
 
     real_optmizer = torch.optim.Adam(real_model.parameters(), lr=1e-4)
-    real_model.to(device)
 
     all_emb = []
     all_images = []
@@ -277,15 +293,16 @@ def main():
 
 
 
-    num_epochs = 20
+    num_epochs = 100
     logger = TrainingLogger(f"{PREFIX}.db")
-    exp_id_real = logger.register_experiment(name="Real")
-    exp_id_contolle = logger.register_experiment(name="Controlle")
-    exp_id_our = logger.register_experiment(name="Our")
 
-    run_id_real = logger.get_next_run_id(exp_id_real)
+    exp_id_contolle = logger.register_experiment(name="Real+Gen")
+    exp_id_our = logger.register_experiment(name="Real+Our")
+    exp_id_real = logger.register_experiment(name="Real")
+
     run_id_contolle = logger.get_next_run_id(exp_id_contolle)
     run_id_our = logger.get_next_run_id(exp_id_our)
+    run_id_real = logger.get_next_run_id(exp_id_real)
 
 
     epoch_iter = tqdm.trange(num_epochs, desc=mode)
@@ -293,7 +310,7 @@ def main():
         fig, ax1 = plt.subplots(4, 1, figsize=(20, 20))
         epoch_iter.set_description(f"Epoch {epoch} - training controlle")
         controlle_model.train()
-        controlle_train_acc, controlle_train_loss = utils.train(controlle_model, generator, controlle_optimizer, criterion, aug=aug)
+        controlle_train_acc, controlle_train_loss = utils.train(controlle_model, CombineDataLoader([train_loader, generator]), controlle_optimizer, criterion, aug=aug)
 
         epoch_iter.set_description(f"Epoch {epoch} - testing controlle")
         controlle_model.eval()
@@ -301,27 +318,30 @@ def main():
 
         logger.report_result(exp_id_contolle, run_id_contolle, epoch, controlle_train_loss, controlle_train_acc, controlle_test_loss, controlle_test_acc)
 
-        epoch_iter.set_description(f"Epoch {epoch} - training real")
-        real_model.train()
-        real_train_acc, real_train_loss = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
-
-        epoch_iter.set_description(f"Epoch {epoch} - testing real")
-        real_model.eval()
-        real_test_acc, real_test_loss = utils.test(real_model, eval_loader, criterion)
-
-        logger.report_result(exp_id_real, run_id_real, epoch, real_train_loss, real_train_acc, real_test_loss, real_test_acc)
-
         dynamic_generator.anchors = torch.concatenate(all_emb).to(device)
         dynamic_generator.labels = torch.concatenate(all_labels).to(device)
         epoch_iter.set_description(f"Epoch {epoch} - training our")
         our_model.train()
-        our_train_acc, our_train_loss = utils.train(our_model, dynamic_generator, our_optmizer, criterion, aug=aug)
+        our_train_acc, our_train_loss = utils.train(our_model, CombineDataLoader([train_loader, dynamic_generator]), our_optmizer, criterion, aug=aug)
 
         epoch_iter.set_description(f"Epoch {epoch} - testing our")
         our_model.eval()
         our_test_acc, our_test_loss = utils.test(our_model, eval_loader, criterion)
 
         logger.report_result(exp_id_our, run_id_our, epoch, our_train_loss, our_train_acc, our_test_loss, our_test_acc)
+
+        epoch_iter.set_description(f"Epoch {epoch} - training real")
+        real_model.train()
+        real_train_acc1, real_train_loss1 = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
+        real_train_acc2, real_train_loss2 = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
+        real_train_acc = (real_train_acc1 + real_train_acc2) / 2
+        real_train_loss = (real_train_loss1 + real_train_loss2) / 2
+        
+        epoch_iter.set_description(f"Epoch {epoch} - testing real")
+        real_model.eval()
+        real_test_acc, real_test_loss = utils.test(real_model, eval_loader, criterion)
+        
+        logger.report_result(exp_id_real, run_id_real, epoch, real_train_loss, real_train_acc, real_test_loss, real_test_acc)
 
         epoch_iter.set_description(f"updating anchors")
         for i in range(10):
@@ -372,7 +392,7 @@ def main():
             plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{epoch}_{i}.png")
             plt.close()
         
-        epoch_iter.set_postfix(controlle_test_acc=f"{controlle_test_acc*100:.1f}%", real_test_acc=f"{real_test_acc*100:.1f}%", our_test_acc=f"{our_test_acc*100:.1f}%")
+        epoch_iter.set_postfix(controlle_test_acc=f"{controlle_test_acc*100:.1f}%", our_test_acc=f"{our_test_acc*100:.1f}%")
         
             
         # print(f"enbedding diff {(embed - original).abs().sum()}")
