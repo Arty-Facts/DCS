@@ -86,28 +86,27 @@ class UnClip(nn.Module):
             prior_latents = self.pipe.prior.post_process_latents(prior_latents)
 
             image_embeddings = prior_latents
-            text_enc_hid_states, additive_clip_time_embeddings = self.pipe.text_proj(
-                image_embeddings=image_embeddings,
-                prompt_embeds=prompt_embeds,
-                text_encoder_hidden_states=text_enc_hid_states,
-                do_classifier_free_guidance=do_classifier_free_guidance,
-            )
 
-            print(image_embeddings.shape, text_enc_hid_states.shape, additive_clip_time_embeddings.shape, text_mask.shape)
-            return image_embeddings, (text_enc_hid_states, additive_clip_time_embeddings, text_mask)
+            return image_embeddings, prompt_embeds, text_enc_hid_states, text_mask
     
     def emb2img(self, 
                 image_embeddings, 
-                hidden_states,      
+                prompt_embeds,  
+                text_enc_hid_states,
+                text_mask,   
                 decoder_num_inference_steps: int = 25,
                 decoder_guidance_scale: float = 8.0,
                 ):
-        batch_size = image_embeddings.shape[0]
         do_classifier_free_guidance = decoder_guidance_scale > 1.0
-
-        text_enc_hid_states, additive_clip_time_embeddings, text_mask  = hidden_states
         
+        text_enc_hid_states, additive_clip_time_embeddings = self.pipe.text_proj(
+            image_embeddings=image_embeddings,
+            prompt_embeds=prompt_embeds,
+            text_encoder_hidden_states=text_enc_hid_states,
+            do_classifier_free_guidance=do_classifier_free_guidance,
+        )
 
+        batch_size = text_enc_hid_states.shape[0]//2
 
         decoder_text_mask = F.pad(text_mask, (self.pipe.text_proj.clip_extra_context_tokens, 0), value=True)
 

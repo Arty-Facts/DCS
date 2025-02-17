@@ -16,7 +16,6 @@ num_epochs: 10
 lr: 0.001
 weight_decay: 0.00005
 model_name: resnet18.a1_in1k
-drop_rate: 0.1
 pretrained: False
 augmentations: color_crop_cutout_flip_scale_rotate
 shuffle: True

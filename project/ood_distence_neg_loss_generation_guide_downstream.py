@@ -24,12 +24,12 @@ class CombineDataLoader:
     def __init__(self, loaders):
         self.loaders = loaders
         self.batch_size = loaders[0].batch_size
-    
+
     def __iter__(self):
         self.iterators = [iter(loader) for loader in self.loaders]
         self.at_loader_index = 0
         return self
-    
+
     def __next__(self):
         next_data =  next(self.iterators[self.at_loader_index])
         self.at_loader_index = (self.at_loader_index + 1) % len(self.loaders)
@@ -45,7 +45,7 @@ def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True,
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))  # Adjust the size as needed
     fig.suptitle(f'{tile} Evaluation')
 
-    def add_shadow(ax, data): 
+    def add_shadow(ax, data):
         if data.var() > 1e-6:
             l = ax.lines[-1]
             x = l.get_xydata()[:,0]
@@ -62,7 +62,7 @@ def plot(id_score, gen_score, oods, dataset, tile, out_dir='figs', verbose=True,
 
     sns.kdeplot(data=gen_score, bw_adjust=.2, ax=ax, label=f'Generated: {np.mean(gen_score):.2f}')
     add_shadow(ax, gen_score)
-    
+
     if names is None:
         it = enumerate(oods)
     else:
@@ -111,7 +111,7 @@ def main():
     clean = False
 
     root_path = pathlib.Path('/mnt/data/arty/data/IT-GAN')
-    data_path = root_path / 'data' 
+    data_path = root_path / 'data'
     model_path = root_path / 'checkpoints'
     checkpoint_path = pathlib.Path('checkpoints')
     checkpoint_path.mkdir(exist_ok=True, parents=True)
@@ -136,7 +136,7 @@ def main():
     baseline_model_config_path = 'project/config_baseline.yaml'
     with open(baseline_model_config_path, 'r') as f:
         baseline_model_config = yaml.safe_load(f)
-    
+
     our_model = get_baseline_model(baseline_model_config, pre_trained=False)
     our_model.to(device)
 
@@ -182,7 +182,7 @@ def main():
             torch.save(real_emb, f)
         with open(checkpoint_path/f"real_images_{dataset}_{encoder_name}_{generator_name}.pt", 'wb') as f:
             torch.save(real_images, f)
-    
+
     if pathlib.Path(checkpoint_path/f"gen_emb_{dataset}_{encoder_name}_{generator_name}.pt").exists() \
         and pathlib.Path(checkpoint_path/f"gen_images_{dataset}_{encoder_name}_{generator_name}.pt").exists() \
         and not clean:
@@ -208,7 +208,7 @@ def main():
             torch.save(gen_emb, f)
         with open(checkpoint_path/f"gen_images_{dataset}_{encoder_name}_{generator_name}.pt", 'wb') as f:
             torch.save(gen_images, f)
-    
+
     pca = PCA(n_components=2)
     all_data = torch.cat([real_emb, gen_emb], dim=1)
     all_label = torch.cat([torch.arange(10), torch.arange(10)], dim=0)
@@ -296,13 +296,13 @@ def main():
     num_epochs = 100
     logger = TrainingLogger(f"{PREFIX}.db")
 
-    exp_id_contolle = logger.register_experiment(name="Real+Gen")
-    exp_id_our = logger.register_experiment(name="Real+Our")
-    exp_id_real = logger.register_experiment(name="Real")
+    exp_id_contolle = logger.register_experiment(name="Gen")
+    exp_id_our = logger.register_experiment(name="Our")
+    # exp_id_real = logger.register_experiment(name="Real")
 
     run_id_contolle = logger.get_next_run_id(exp_id_contolle)
     run_id_our = logger.get_next_run_id(exp_id_our)
-    run_id_real = logger.get_next_run_id(exp_id_real)
+    # run_id_real = logger.get_next_run_id(exp_id_real)
 
 
     epoch_iter = tqdm.trange(num_epochs, desc=mode)
@@ -330,18 +330,18 @@ def main():
 
         logger.report_result(exp_id_our, run_id_our, epoch, our_train_loss, our_train_acc, our_test_loss, our_test_acc)
 
-        epoch_iter.set_description(f"Epoch {epoch} - training real")
-        real_model.train()
-        real_train_acc1, real_train_loss1 = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
-        real_train_acc2, real_train_loss2 = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
-        real_train_acc = (real_train_acc1 + real_train_acc2) / 2
-        real_train_loss = (real_train_loss1 + real_train_loss2) / 2
-        
-        epoch_iter.set_description(f"Epoch {epoch} - testing real")
-        real_model.eval()
-        real_test_acc, real_test_loss = utils.test(real_model, eval_loader, criterion)
-        
-        logger.report_result(exp_id_real, run_id_real, epoch, real_train_loss, real_train_acc, real_test_loss, real_test_acc)
+        # epoch_iter.set_description(f"Epoch {epoch} - training real")
+        # real_model.train()
+        # real_train_acc1, real_train_loss1 = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
+        # real_train_acc2, real_train_loss2 = utils.train(real_model, train_loader, real_optmizer, criterion, aug=aug)
+        # real_train_acc = (real_train_acc1 + real_train_acc2) / 2
+        # real_train_loss = (real_train_loss1 + real_train_loss2) / 2
+
+        # epoch_iter.set_description(f"Epoch {epoch} - testing real")
+        # real_model.eval()
+        # real_test_acc, real_test_loss = utils.test(real_model, eval_loader, criterion)
+
+        # logger.report_result(exp_id_real, run_id_real, epoch, real_train_loss, real_train_acc, real_test_loss, real_test_acc)
 
         epoch_iter.set_description(f"updating anchors")
         for i in range(10):
@@ -358,7 +358,7 @@ def main():
             labels = all_labels[i]
             imdexs = list(range(len(images)))
             images = list(zip(images, labels, imdexs))
-            
+
 
             loss_func = ood_detectors[i]
 
@@ -391,12 +391,12 @@ def main():
 
             plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{epoch}_{i}.png")
             plt.close()
-        
+
         epoch_iter.set_postfix(controlle_test_acc=f"{controlle_test_acc*100:.1f}%", our_test_acc=f"{our_test_acc*100:.1f}%")
-        
-            
+
+
         # print(f"enbedding diff {(embed - original).abs().sum()}")
-        
+
 
 
 def update_anchors(anchors, images, lables, epochs, loss_func, generator, encoder, our_model, batch_size, threshold, device):
@@ -451,7 +451,7 @@ def update_anchors(anchors, images, lables, epochs, loss_func, generator, encode
             # batch_loss = -batch_logit_loss
 
             batch_embs = encoder(gen_images)
-            batch_ood_loss = loss_func(batch_embs) 
+            batch_ood_loss = loss_func(batch_embs)
             all_above_threshold = batch_ood_loss > threshold
 
             batch_loss = batch_ood_loss / threshold - batch_logit_loss
@@ -470,7 +470,7 @@ def update_anchors(anchors, images, lables, epochs, loss_func, generator, encode
         a.copy_(l.data)
     return out_images, np.array(losses)
 
-       
+
 
 
 if __name__ == "__main__":

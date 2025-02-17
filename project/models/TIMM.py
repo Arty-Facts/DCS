@@ -2,7 +2,7 @@ import timm
 import torch.nn as nn
 
 class TimmModel(nn.Module):
-    def __init__(self, model_name: str, num_classes: int, drop_rate: float = 0.1, pretrained: bool = True):
+    def __init__(self, model_name: str, num_classes: int, pretrained: bool = True):
         super().__init__()
         self.name = model_name
         self.encoder = timm.create_model(model_name, pretrained=pretrained, num_classes=0)
@@ -12,9 +12,6 @@ class TimmModel(nn.Module):
         self.head = nn.Identity()
         if num_classes > 0:
             self.head = nn.Sequential(
-                nn.Linear(self.encoder.num_features, self.encoder.num_features), 
-                nn.ReLU(),
-                nn.Dropout(drop_rate),
                 nn.Linear(self.encoder.num_features, num_classes)
             )
         self.encoder_grad(True)

@@ -30,7 +30,6 @@ def train_baseline_conf(conf):
     lr = conf['lr']
     weight_decay = conf['weight_decay']
     model_name = conf['model_name']
-    drop_rate = conf['drop_rate']
     pretrained = conf['pretrained']
     augmentations = conf['augmentations']
     shuffle = conf['shuffle']
@@ -67,7 +66,7 @@ def train_baseline_conf(conf):
 
 
     print(f"Training {mode} {model_name}")
-    model = TimmModel(model_name, real_data['num_classes'], drop_rate=drop_rate, pretrained=pretrained).to(device)
+    model = TimmModel(model_name, real_data['num_classes'], pretrained=pretrained).to(device)
     model.encoder_grad(not pretrained)
     model.head_grad(True)
     train_loader = utils.TransformLoader(loader, utils.get_transforms(model, mode, pretrained, device=device))
