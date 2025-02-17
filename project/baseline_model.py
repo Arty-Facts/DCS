@@ -1,6 +1,7 @@
 import pathlib
 import project.utils as utils
 from project.models.TIMM import TimmModel
+from project.models.models import ResNet18_32x32
 import torch
 import torch.nn as nn
 import tqdm
@@ -67,9 +68,12 @@ def train_baseline_conf(conf):
 
 
     print(f"Training {mode} {model_name}")
-    model = TimmModel(model_name, real_data['num_classes'], drop_rate=drop_rate, pretrained=pretrained).to(device)
-    model.encoder_grad(not pretrained)
-    model.head_grad(True)
+    if model_name == "resnet18_32x32":
+        model = ResNet18_32x32(num_classes=real_data['num_classes']).to(device)
+    else:
+        model = TimmModel(model_name, real_data['num_classes'], pretrained=pretrained).to(device)
+        model.encoder_grad(not pretrained)
+        model.head_grad(True)
     train_loader = utils.TransformLoader(loader, utils.get_transforms(model, mode, pretrained, device=device))
     eval_loader = utils.ImageLoader(eval_data, utils.get_transforms(model, 'Real', pretrained))
     criterion = nn.CrossEntropyLoss()
