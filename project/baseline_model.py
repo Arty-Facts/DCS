@@ -15,6 +15,40 @@ import copy
 import functools
 from collections import defaultdict
 import project.augmentations as aug_lib
+import torchvision
+
+normalization_dict = {
+    'cifar10': [[0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616]],
+    'cifar100': [[0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761]],
+    'imagenet': [[0.485, 0.456, 0.406], [0.229, 0.224, 0.225]],
+}
+
+def cifar10_resnet18_32x32(num_classes=10):
+        model = ResNet18_32x32(num_classes=num_classes)
+        model.transform = torchvision.transforms.Compose([
+            torchvision.transforms.Resize((32, 32)),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(*normalization_dict['cifar10'])
+        ])
+
+        model.train_transform = torchvision.transforms.Compose([
+            torchvision.transforms.RandomResizedCrop(32),
+            torchvision.transforms.RandomHorizontalFlip(),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(*normalization_dict['cifar10'])
+        ])
+        model.name = "resnet18_32x32"
+        return model
+
+def build_model(model_name, real_data, pretrained):
+    if model_name == "resnet18_32x32":
+        model = cifar10_resnet18_32x32(real_data['num_classes'])
+    else:
+        model = TimmModel(model_name, real_data['num_classes'], pretrained=pretrained)
+        model.encoder_grad(not pretrained)
+        model.head_grad(True)
+    return model
+
 
 def train_baseline_conf(conf):
     dataset = conf['dataset']
@@ -67,12 +101,8 @@ def train_baseline_conf(conf):
 
 
     print(f"Training {mode} {model_name}")
-    if model_name == "resnet18_32x32":
-        model = ResNet18_32x32(num_classes=real_data['num_classes']).to(device)
-    else:
-        model = TimmModel(model_name, real_data['num_classes'], pretrained=pretrained).to(device)
-        model.encoder_grad(not pretrained)
-        model.head_grad(True)
+    model = build_model(model_name, real_data, pretrained).to(device)
+
     train_loader = utils.TransformLoader(loader, utils.get_transforms(model, mode, pretrained, device=device))
     eval_loader = utils.ImageLoader(eval_data, utils.get_transforms(model, 'Real', pretrained))
     criterion = nn.CrossEntropyLoss()
@@ -140,7 +170,7 @@ def get_baseline_model(conf, pre_trained=True):
     experiment = conf['name']
     id = conf['id']
     real_data = utils.get_dataset(dataset, data_path)
-    model = TimmModel(model_name, real_data['num_classes'], drop_rate=drop_rate, pretrained=pretrained).to(device)
+    model = build_model(model_name, real_data, pretrained).to(device)
     if not pre_trained:
         return model
 

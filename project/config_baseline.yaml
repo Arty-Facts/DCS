@@ -12,14 +12,13 @@ exp: 0
 # ==== training ====
 batch_size: 128
 num_workers: 0
-num_epochs: 10
-lr: 0.001
+num_epochs: 100
+lr: 0.0005
 weight_decay: 0.00005
 model_name: resnet18_32x32
 pretrained: False
 augmentations: color_crop_cutout_flip_scale_rotate
 shuffle: True
-unfreeze_after: 0.2
 # ==== compute ====
 verbose: True
 save: True
