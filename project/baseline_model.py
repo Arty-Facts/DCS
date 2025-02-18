@@ -16,6 +16,7 @@ import functools
 from collections import defaultdict
 import project.augmentations as aug_lib
 import torchvision
+from project.train_logger import TrainingLogger
 
 normalization_dict = {
     'cifar10': [[0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616]],
@@ -78,6 +79,9 @@ def train_baseline_conf(conf):
     # Load the dataset
     real_data = utils.get_dataset(dataset, data_path)
     torch.backends.cudnn.benchmark = True
+    logger = TrainingLogger(f"baseline_model.db")
+    exp_id = logger.register_experiment(name="baseline_model")
+    run_id = logger.get_next_run_id(exp_id)
 
         
     if mode == "Real":
@@ -136,9 +140,12 @@ def train_baseline_conf(conf):
         if test_acc_tmp > test_acc:
             best_model = model.state_dict()
         test_acc=test_acc_tmp
+        logger.report_result(exp_id, run_id, epoch, train_loss, train_acc, test_loss, test_acc)
         if verbose:
             epoch_iter.set_description(f"{mode} - Done")
             epoch_iter.set_postfix(test_acc=f"{test_acc*100:.1f}%", train_acc=f"{train_acc*100:.1f}%", train_loss=f"{train_loss:.4f}", test_loss=f"{test_loss:.4f}")
+        
+    
     result = {
         "test_acc" : test_accs,
         "train_acc" : train_accs,
