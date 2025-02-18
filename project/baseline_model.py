@@ -69,7 +69,6 @@ def train_baseline_conf(conf):
     pretrained = conf['pretrained']
     augmentations = conf['augmentations']
     shuffle = conf['shuffle']
-    unfreeze_after = conf['unfreeze_after']
     experiment = conf['name']
     id = conf['id']
     save = conf['save']
@@ -80,7 +79,7 @@ def train_baseline_conf(conf):
     real_data = utils.get_dataset(dataset, data_path)
     torch.backends.cudnn.benchmark = True
     logger = TrainingLogger(f"baseline_model.db")
-    exp_id = logger.register_experiment(name="baseline_model")
+    exp_id = logger.register_experiment(name=mode)
     run_id = logger.get_next_run_id(exp_id)
 
         
@@ -124,8 +123,6 @@ def train_baseline_conf(conf):
         epoch_iter = range(num_epochs)
     test_acc = 0
     for epoch in epoch_iter:
-        if epoch == int(num_epochs*unfreeze_after) and pretrained:
-            model.encoder_grad(True)
         if verbose:
             epoch_iter.set_description(f"{mode} - training")
         train_acc, train_loss = utils.train(model, train_loader, optimizer, criterion, aug=aug)
