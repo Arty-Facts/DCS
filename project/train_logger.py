@@ -260,6 +260,8 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
         fig, ax = plt.subplots(figsize=(8, 6))
     for experiment_id in experiment_ids:
         epochs, means, stds, maxs, samples= db.get_epoch_stats(experiment_id, metric)
+        if len(epochs) == 0:
+            continue
         name = db.get_experiment_name(experiment_id)
             
 
@@ -295,6 +297,8 @@ def plot_samples(db, *experiment_ids, metric='train_loss', ax=None):
         fig, ax = plt.subplots(figsize=(8, 6))
     for experiment_id in experiment_ids:
         epochs, means, stds, maxs, samples= db.get_epoch_stats(experiment_id, metric)
+        if len(epochs) == 0:
+            continue
         name = db.get_experiment_name(experiment_id)
         ax.plot(epochs, samples, label=f'{name} Samples', marker='o', alpha=0.7)
         
