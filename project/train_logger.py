@@ -238,7 +238,9 @@ class TrainingLogger:
         epochs = sorted(epoch_values.keys())
         means = [np.mean(epoch_values[e]) for e in epochs]
         stds = [np.std(epoch_values[e]) for e in epochs]
-        return epochs, means, stds
+        maxs = [np.max(epoch_values[e]) for e in epochs]
+        samples = [len(epoch_values[e]) for e in epochs]
+        return epochs, means, stds, maxs, samples
 
     def close(self):
         """Close the SQLite database connection."""
@@ -257,19 +259,49 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
     for experiment_id in experiment_ids:
-        epochs, means, stds = db.get_epoch_stats(experiment_id, metric)
+        epochs, means, stds, maxs, samples= db.get_epoch_stats(experiment_id, metric)
         name = db.get_experiment_name(experiment_id)
             
 
 
-        ax.plot(epochs, means, label=f'{name} Mean {metric}', marker='o')
+        max_loc = np.argmax(maxs)
+        mean_loc = np.argmax(means)
+        ax.plot(epochs, means, label=f'{name} mean: {means[mean_loc]*100:.1f}±{stds[mean_loc]*100:.1f}', marker='o', alpha=0.7)
         ax.fill_between(epochs,
                         np.array(means) - np.array(stds),
                         np.array(means) + np.array(stds),
                         alpha=0.2, label='Std Dev')
+        color = ax.get_lines()[-1].get_color()
+        ax.scatter(epochs[max_loc], maxs[max_loc], color=color, marker='x')
+        
     ax.set_xlabel('Epoch')
     ax.set_ylabel(metric)
-    ax.set_title(f'{metric} over Epochs')
+    ax.set_title(f'Mean {metric} over Epochs')
+    # add more granular ticks
+    ax.grid(True)
+    ax.legend()
+
+def plot_samples(db, *experiment_ids, metric='train_loss', ax=None):
+    """
+    Plot the mean and standard deviation of a given metric over epochs.
+    
+    This aggregates the data across all runs of the experiment.
+    
+    Args:
+        experiment_id (int): The experiment identifier.
+        metric (str): The metric to plot (e.g., 'train_loss').
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+    for experiment_id in experiment_ids:
+        epochs, means, stds, maxs, samples= db.get_epoch_stats(experiment_id, metric)
+        name = db.get_experiment_name(experiment_id)
+        ax.plot(epochs, samples, label=f'{name} Samples', marker='o', alpha=0.7)
+        
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Samples')
+    ax.set_title(f'Samples over Epochs')
+    # add more granular ticks
     ax.grid(True)
     ax.legend()
 
