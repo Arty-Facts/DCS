@@ -24,5 +24,4 @@ verbose: True
 save: True
 device: cuda
 nodes: [0]
-jobs_per_node: 1
 

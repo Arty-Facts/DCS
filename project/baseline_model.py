@@ -102,12 +102,12 @@ def train_baseline_conf(conf):
                                     num_workers=num_workers, batch_size=batch_size, device=device)
     eval_data = torch.utils.data.DataLoader(real_data['test'], batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack)
 
-
-    print(f"Training {mode} {model_name}")
     model = build_model(model_name, real_data, pretrained).to(device)
-
-    train_loader = utils.TransformLoader(loader, utils.get_transforms(model, mode, pretrained, device=device))
-    eval_loader = utils.ImageLoader(eval_data, utils.get_transforms(model, 'Real', pretrained))
+    if mode == "Real":
+        train_loader = utils.ImageLoader(loader, utils.get_transforms(model, mode, pretrained, device=device), device=device)
+    else:
+        train_loader = utils.TransformLoader(loader, utils.get_transforms(model, mode, pretrained, device=device), device=device)
+    eval_loader = utils.ImageLoader(eval_data, utils.get_transforms(model, 'Real', pretrained, device=device), device=device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=num_epochs)
@@ -122,6 +122,7 @@ def train_baseline_conf(conf):
     else:
         epoch_iter = range(num_epochs)
     test_acc = 0
+    print(f"Training {mode} {model_name}")
     for epoch in epoch_iter:
         if verbose:
             epoch_iter.set_description(f"{mode} - training")
@@ -169,7 +170,6 @@ def get_baseline_model(conf, pre_trained=True):
     data_path = root_path / conf['data_path']
     checkpoint_path = root_path / conf['checkpoint_path']
     model_name = conf['model_name']
-    drop_rate = conf['drop_rate']
     pretrained = conf['pretrained']
     experiment = conf['name']
     id = conf['id']

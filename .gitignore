@@ -18,3 +18,4 @@ checkpoints/
 *.png
 local_venv/
 data_text_2_image/data_venv/
+.nfs*

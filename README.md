@@ -92,3 +92,6 @@ The released data include: [1] pretrained BigGAN Generators; [2] GAN Inversion l
 We also provide some raw training codes which have been neither re-organized nor validated. Just for reference. The raw training code is [here](https://drive.google.com/drive/folders/1vENTbqDdt6f0K2fQpuUfuCEnj_09Bqeh?usp=sharing). Replace md_utils.py with utils.py, md_networks.py with networks.py if applicable. 
 
 mysql+pymysql://root:root@172.16.1.129/dcs
+
+
+dockipy project/run.py  project/config_baseline.yaml
