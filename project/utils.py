@@ -120,7 +120,7 @@ def get_strategy(strategy, generator, model, real_data, device):
         raise ValueError(f'Invalid strategy: {strategy}')
     return strategies.LatentWalker(generator, real_data, model, strategy=strat, **strategy['walker_args'])
 
-def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, aug=None, verbose=False):
+def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, aug=None, transform=None, verbose=False):
     loss_sum = 0
     train_acc = 0
     model.train()
@@ -130,6 +130,8 @@ def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, a
         data_iter = loader
     iter_count = 0
     for x, y, i in data_iter:
+        if transform is not None:
+            x = transform(x)
         if aug is not None:
             x = aug(x)
         optimizer.zero_grad()
@@ -152,7 +154,7 @@ def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, a
     loss_sum /= iter_count
     return train_acc,  loss_sum
 
-def test(model, loader, criterion, verbose=False):
+def test(model, loader, criterion, transform=None, verbose=False):
     loss_sum = 0
     test_acc = 0
     model.eval()
@@ -163,6 +165,8 @@ def test(model, loader, criterion, verbose=False):
     iter_count = 0
     with torch.no_grad():
         for x, y, i in data_iter:
+            if transform is not None:
+                x = transform(x)
             y_hat = model(x)
             loss = criterion(y_hat, y)
             test_acc += (y_hat.argmax(-1) == y).float().sum().item()
@@ -397,7 +401,19 @@ def get_transforms(model, mode, pretrained=True, device='cpu'):
                     print(f'Warning: Ignoring transform {t}')
             return Composite(layers).to(device)
     
-
+def get_encoder_transform(model, device='cpu'):
+    layers = []
+    for t in model.transform.transforms:
+        if isinstance(t, transforms.Resize):
+            mode = get_interpolation_mode(t)
+            layers.append(torch.nn.Upsample(size=t.size, mode=mode))
+        elif isinstance(t, transforms.CenterCrop):
+            layers.append(t)
+        elif isinstance(t, transforms.Normalize):
+            layers.append(t)
+        else:
+            print(f'Warning: Ignoring transform {t}')
+    return Composite(layers).to(device)
 
 class DatasetLoader():
     def __init__(self, dataset, batch_size, shuffle=True, drop_last=False, collate_fn=diff_stack):
@@ -524,7 +540,10 @@ class TransformLoader():
     def __iter__(self):
         for batch in self.dataloader:
             data, target, *rest = batch
-            data = self.transform(torch.stack([d for d in data]).to(self.device))
+            if self.transform is None:
+                data = torch.stack([d for d in data]).to(self.device)
+            else:
+                data = self.transform(torch.stack([d for d in data]).to(self.device))
             target = target.to(self.device)
             yield data, target, *rest
         
@@ -542,7 +561,10 @@ class ImageLoader():
     def __iter__(self):
         for batch in self.dataloader:
             data, target, *rest = batch
-            data = torch.stack([self.transform(d).to(self.device) for d in data])
+            if self.transform is None:
+                data = torch.stack([d.to(self.device) for d in data])
+            else:
+                data = torch.stack([self.transform(d).to(self.device) for d in data])
             target = target.to(self.device)
             yield data, target, *rest
         
