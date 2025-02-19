@@ -1,5 +1,6 @@
 import project.baseline_model as bm
 import project.device_info as di
+import project.gan_sampler as gs
 import project.ops_utils as ops_utils
 import yaml
 import argparse
@@ -12,7 +13,14 @@ def runner(func, conf, device_id):
     return func(curr_conf)
 
 
-def main(conf, experiments):
+def baseline():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("config", type=str, help="Path to the config file")
+    experiments = 2
+    args = parser.parse_args()
+    with open(args.config, "r") as file:
+        conf = yaml.safe_load(file)
+
     device_info = di.Device()
     jobs = []
     for mode in ['Real', 'ITGAN', 'GAN_Inversion', 'Random']:
@@ -36,13 +44,26 @@ def main(conf, experiments):
     print(f'Running {len(jobs)} jobs...')
     ops_utils.parallelize(runner, jobs, gpu_nodes, verbose=True, timeout=60*60*3)
 
-    pass 
+def gan_sampler():
+    device_info = di.Device()
+
+    jobs = [(gs.main, {'verbose': False})]
+    gpu_nodes = []
+    mem_req = 12
+    max_per_gpu = 1
+    experiments = 4
+    for id, gpu in enumerate(device_info):
+        if gpu.mem.free > mem_req:
+            use_gpu = int(gpu.mem.free/mem_req)
+            if use_gpu > max_per_gpu:
+                use_gpu = max_per_gpu
+            gpu_nodes.extend([id]*use_gpu)
+    if len(gpu_nodes) == 0:
+        raise ValueError('No available GPU nodes')
+
+    jobs = jobs*experiments
+    print(f'Running {len(jobs)} jobs...')
+    ops_utils.parallelize(runner, jobs, gpu_nodes, verbose=True, timeout=60*60*3)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("config", type=str, help="Path to the config file")
-    experiments = 2
-    args = parser.parse_args()
-    with open(args.config, "r") as file:
-        conf = yaml.safe_load(file)
-    main(conf, experiments)
+    gan_sampler()

@@ -99,8 +99,13 @@ def resize(x, size):
     else:
         return torch.nn.functional.interpolate(x, size=size, mode='bilinear', align_corners=False)
 
-def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+def main(config=None):
+    if config is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        verbose = True
+    else:
+        device = config['device']
+        verbose = config['verbose']
     mode = 'ITGAN'
     dataset = 'CIFAR10'
     exp = 0
@@ -113,6 +118,8 @@ def main():
     model_path = root_path / 'checkpoints'
     checkpoint_path = pathlib.Path('checkpoints')
     checkpoint_path.mkdir(exist_ok=True, parents=True)
+    figure_path = pathlib.Path('figs')/dataset
+    figure_path.mkdir(exist_ok=True, parents=True)
     weight_path = model_path / f"G_Pretrained_{dataset}_exp{exp}.pth"
 
     encoder = vision_ood.get_encoder("dinov2")
@@ -149,11 +156,13 @@ def main():
     if pathlib.Path(checkpoint_path/f"real_emb_{dataset}_{encoder_name}_{generator_name}.pt").exists() \
         and pathlib.Path(checkpoint_path/f"real_images_{dataset}_{encoder_name}_{generator_name}.pt").exists() \
         and not clean:
-        print("Loading real embeddings")
+        if verbose:
+            print("Loading real embeddings")
         real_emb = torch.load(checkpoint_path/f"real_emb_{dataset}_{encoder_name}_{generator_name}.pt", weights_only=False)
         real_images = torch.load(checkpoint_path/f"real_images_{dataset}_{encoder_name}_{generator_name}.pt", weights_only=False)
     else:
-        print("Calculating real embeddings")
+        if verbose:
+            print("Calculating real embeddings")
         for l, v in tqdm.tqdm(data_blob.items()):
             images, labels, embeddings = zip(*v)
             indexs = list(range(len(images)))
@@ -175,11 +184,13 @@ def main():
     if pathlib.Path(checkpoint_path/f"gen_emb_{dataset}_{encoder_name}_{generator_name}.pt").exists() \
         and pathlib.Path(checkpoint_path/f"gen_images_{dataset}_{encoder_name}_{generator_name}.pt").exists() \
         and not clean:
-        print("Loading generated embeddings")
+        if verbose:
+            print("Loading generated embeddings")
         gen_emb = torch.load(checkpoint_path/f"gen_emb_{dataset}_{encoder_name}_{generator_name}.pt", weights_only=False)
         gen_images = torch.load(checkpoint_path/f"gen_images_{dataset}_{encoder_name}_{generator_name}.pt", weights_only=False)
     else:
-        print("Calculating generated embeddings")
+        if verbose:
+            print("Calculating generated embeddings")
         for l, v in tqdm.tqdm(data_blob.items()):
             images, labels, embeddings = zip(*v)
             indexs = list(range(len(images)))
@@ -226,21 +237,24 @@ def main():
 
     # ood_detectors = [likelihood.RDM(embedding_size).to("cpu") for _ in range(10)]
     ood_detectors = [residual.Residual(0.3) for _ in range(10)]
-    print("Fitting OOD Detectors")
+    if verbose:
+        print("Fitting OOD Detectors")
     for i, ood_detector in tqdm.tqdm(list(enumerate(ood_detectors))):
         if pathlib.Path(checkpoint_path/f"{ood_detector.name}_{dataset}_{encoder_name}_{generator_name}_{i}.pt").exists() and not clean:
             ood_detector.load_state_dict(torch.load(checkpoint_path/f"{ood_detector.name}_{dataset}_{encoder_name}_{generator_name}_{i}.pt", weights_only=False))
-            print(f"OOD Detector {i} Loaded")
+            if verbose:
+                print(f"OOD Detector {i} Loaded")
         else:
             ood_detector.to(device)
             ood_detector.fit(real_emb[i], batch_size=1000, n_epochs=1000, verbose=False)
             ood_detector.to("cpu")
             torch.save(ood_detector.state_dict(), checkpoint_path/f"{ood_detector.name}_{dataset}_{encoder_name}_{generator_name}_{i}.pt")
-            print(f"OOD Detector {i} Fitted")
+            if verbose:
+                print(f"OOD Detector {i} Fitted")
     scores_real = torch.zeros((10, 10, 5000))
     scores_gen = torch.zeros((10, 10, 5000))
-
-    print("Calculating Scores")
+    if verbose:
+        print("Calculating Scores")
     for i, ood_detector in tqdm.tqdm(list(enumerate(ood_detectors))):
         for index in range(10):
             if pathlib.Path(checkpoint_path / f'score_real_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt').exists() and not clean:
@@ -261,8 +275,8 @@ def main():
                 ood_detector.to("cpu")
                 torch.save(score_gen, checkpoint_path / f'score_gen_{ood_detector.name}_{i}_{index}_{dataset}_{encoder_name}.pt')
                 scores_gen[i][index] = score_gen
-
-    print("Tuning Anchors")
+    if verbose:
+        print("Tuning Anchors")
     aug = functools.partial(aug_lib.diff_augment, strategy="color_crop_cutout_flip_scale_rotate", param=aug_lib.ParamDiffAug())
     eval_data = torch.utils.data.DataLoader(data['test'], batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=utils.imge_stack)
     eval_loader = utils.ImageLoader(eval_data, transform=torchvision.transforms.ToTensor(), device=device)
@@ -357,23 +371,27 @@ def main():
         (our_real_model, our_real_optmizer, exp_id_our_real, run_id_our_real, CombineDataLoader([dynamic_generator, train_loader]), "Our+Real"),
         (real_real_model, real_real_optmizer, exp_id_real_real, run_id_real_real, CombineDataLoader([train_loader, train_loader]), "Realx2"),
     ]
-    epoch_iter = tqdm.trange(num_epochs, desc=mode)
+    if verbose:
+        epoch_iter = tqdm.trange(num_epochs, desc=mode)
+    else:
+        epoch_iter = range(num_epochs)
     for epoch in epoch_iter:
 
         for model, optimizer, exp_id, run_id, loader, name in experiments:
             model.to(device)
-            epoch_iter.set_description(f"Epoch {epoch} - training {name}")
+            if verbose:
+                epoch_iter.set_description(f"Epoch {epoch} - training {name}")
             model.train()
             train_acc, train_loss = utils.train(model, loader, optimizer, criterion, aug=aug, transform=model_transform)
-
-            epoch_iter.set_description(f"Epoch {epoch} - testing {name}")
+            if verbose:
+                epoch_iter.set_description(f"Epoch {epoch} - testing {name}")
             model.eval()
             test_acc, test_loss = utils.test(model, eval_loader, criterion, transform=model_transform)
 
             logger.report_result(exp_id, run_id, epoch, train_loss, train_acc, test_loss, test_acc)
             model.to('cpu')
-
-        epoch_iter.set_description(f"updating anchors")
+        if verbose:
+            epoch_iter.set_description(f"updating anchors")
         for i in range(10):
             samples = 10
             sorted_index_real = torch.argsort(scores_real[i][i])
@@ -396,31 +414,32 @@ def main():
             loss_func.to(device)
             real_mean, real_std = scores_real[i][i].mean(), scores_real[i][i].std()
             threshold = real_mean + 2*real_std
-            print(f"{i} Threshold {threshold:.2f}, Real Mean {real_mean:.2f}, Real Std {real_std:.2f}")
+            if verbose:
+                print(f"{i} Threshold {threshold:.2f}, Real Mean {real_mean:.2f}, Real Std {real_std:.2f}")
             update_epoch = 2
             images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, encoder_transform, our_model, model_transform, threshold, batch_size, device)
             scores_gen_sample_updated = ood_scores[-1][indexs_real]
+            if verbose:
+                fig, ax = plt.subplots(4, samples, figsize=(samples*2, 10))
+                for j in range(samples):
+                    ax[0, j].imshow(images_real_sample[j].permute(1, 2, 0))
+                    ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
+                    ax[0, j].axis('off')
+                    ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
+                    ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
+                    ax[1, j].axis('off')
+                    ax[2, j].imshow(images_gen_sample_updated[indexs_real[j]].permute(1, 2, 0))
+                    ax[2, j].set_title(f"Gen Tuned {scores_gen_sample_updated[j]:.2f}")
+                    ax[2, j].axis('off')
+                    diff = (images_gen_sample_updated[indexs_real[j]] - images_gen_sample[j]).abs()
+                    # diff = diff - diff.min()
+                    # diff = diff / diff.max()
+                    ax[3, j].imshow(diff.permute(1, 2, 0))
+                    ax[3, j].set_title(f"Diff")
+                    ax[3, j].axis('off')
 
-            fig, ax = plt.subplots(4, samples, figsize=(samples*2, 10))
-            for j in range(samples):
-                ax[0, j].imshow(images_real_sample[j].permute(1, 2, 0))
-                ax[0, j].set_title(f"Real {scores_real_sample[j]:.2f}")
-                ax[0, j].axis('off')
-                ax[1, j].imshow(images_gen_sample[j].permute(1, 2, 0))
-                ax[1, j].set_title(f"Gen {scores_gen_sample[j]:.2f}")
-                ax[1, j].axis('off')
-                ax[2, j].imshow(images_gen_sample_updated[indexs_real[j]].permute(1, 2, 0))
-                ax[2, j].set_title(f"Gen Tuned {scores_gen_sample_updated[j]:.2f}")
-                ax[2, j].axis('off')
-                diff = (images_gen_sample_updated[indexs_real[j]] - images_gen_sample[j]).abs()
-                # diff = diff - diff.min()
-                # diff = diff / diff.max()
-                ax[3, j].imshow(diff.permute(1, 2, 0))
-                ax[3, j].set_title(f"Diff")
-                ax[3, j].axis('off')
-
-            plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{epoch}_{i}.png")
-            plt.close()
+                plt.savefig(f"figs/{dataset}/{PREFIX}_sample_{ood_detectors[0].name}_{encoder_name}_{generator_name}_{epoch}_{i}.png")
+                plt.close()
 
 
 
