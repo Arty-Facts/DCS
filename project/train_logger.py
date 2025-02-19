@@ -276,6 +276,7 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
         experiment_id (int): The experiment identifier.
         metric (str): The metric to plot (e.g., 'train_loss').
     """
+    results = []
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
     for experiment_id in experiment_ids:
@@ -295,6 +296,7 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
                         alpha=0.2, label='Std Dev')
         color = ax.get_lines()[-1].get_color()
         ax.scatter(epochs[max_loc], maxs[max_loc], color=color, marker='x')
+        results.append((name, means[mean_loc], stds[mean_loc], maxs[max_loc], samples[max_loc]))
         
     ax.set_xlabel('Epoch')
     ax.set_ylabel(metric)
@@ -302,6 +304,8 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
     # add more granular ticks
     ax.grid(True)
     ax.legend()
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
 
 def plot_samples(db, *experiment_ids, metric='train_loss', ax=None):
     """

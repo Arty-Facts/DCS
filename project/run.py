@@ -14,12 +14,10 @@ def runner(func, conf, device_id):
 
 
 def baseline():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("config", type=str, help="Path to the config file")
     experiments = 2
-    args = parser.parse_args()
-    with open(args.config, "r") as file:
-        conf = yaml.safe_load(file)
+    baseline_model_config_path = 'project/config_baseline.yaml'
+    with open(baseline_model_config_path, 'r') as f:
+        conf = yaml.safe_load(f)
 
     device_info = di.Device()
     jobs = []
