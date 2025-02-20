@@ -395,7 +395,7 @@ def main():
 
             loss_func.to(device)
             real_mean, real_std = scores_real[i][i].mean(), scores_real[i][i].std()
-            threshold = real_mean + 2*real_std
+            threshold = real_mean #+ 2*real_std
             print(f"{i} Threshold {threshold:.2f}, Real Mean {real_mean:.2f}, Real Std {real_std:.2f}")
             update_epoch = 2
             images_gen_sample_updated, ood_scores= update_anchors(embed, images, labels, update_epoch, loss_func, generator, encoder, encoder_transform, our_model, model_transform, threshold, batch_size, device)
@@ -482,7 +482,7 @@ def update_anchors(anchors, images, lables, epochs, loss_func, generator, encode
             all_above_threshold = batch_ood_loss > threshold
 
             batch_loss = batch_ood_loss / threshold - batch_logit_loss
-            batch_loss[all_above_threshold] = batch_ood_loss[all_above_threshold] / threshold + batch_logit_loss[all_above_threshold]
+            # batch_loss[all_above_threshold] = batch_ood_loss[all_above_threshold] / threshold + batch_logit_loss[all_above_threshold]
             # print(batch_loss.shape)
             batch_loss.sum().backward()
             for index, loss, img, ood_loss in zip(index_batch, batch_loss, gen_images, batch_ood_loss):

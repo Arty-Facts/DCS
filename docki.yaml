@@ -62,5 +62,5 @@ remote:
       workspace: ~/DCS
     - name: aztec
       workspace: ~/DCS
-    - name: inferno 
-      workspace: ~/DCS
+        #    - name: inferno 
+        #      workspace: ~/DCS
