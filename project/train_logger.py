@@ -50,6 +50,17 @@ class TrainingLogger:
                 FOREIGN KEY (experiment_id) REFERENCES experiments (id)
             )
         ''')
+
+        # add s table for assigned runs for each experiment
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS assigned_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_id INTEGER,
+                run_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (experiment_id) REFERENCES experiments (id)
+            )
+        ''')     
         self.conn.commit()
 
     def register_experiment(self, name, description=None):
@@ -154,13 +165,22 @@ class TrainingLogger:
         Returns:
             int: The next run id (starting at 1 if no runs exist).
         """
+        ## make sure to read from the database
+
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT MAX(run_id) FROM results WHERE experiment_id = ?",
+            "SELECT MAX(run_id) FROM assigned_runs WHERE experiment_id = ?",
             (experiment_id,)
         )
         row = cursor.fetchone()
-        return 1 if row[0] is None else row[0] + 1
+        # make sure that the value is put in the database
+        next_id = 0 if row[0] is None else row[0] + 1
+        cursor.execute(
+            "INSERT INTO assigned_runs (experiment_id, run_id) VALUES (?, ?)",
+            (experiment_id, next_id)
+        )
+        self.conn.commit()
+        return next_id
 
     def report_result(self, experiment_id, run_id, epoch, train_loss, train_acc, test_loss, test_acc):
         """
@@ -256,6 +276,7 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
         experiment_id (int): The experiment identifier.
         metric (str): The metric to plot (e.g., 'train_loss').
     """
+    results = []
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
     for experiment_id in experiment_ids:
@@ -275,6 +296,7 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
                         alpha=0.2, label='Std Dev')
         color = ax.get_lines()[-1].get_color()
         ax.scatter(epochs[max_loc], maxs[max_loc], color=color, marker='x')
+        results.append((name, means[mean_loc], stds[mean_loc], maxs[max_loc], samples[max_loc]))
         
     ax.set_xlabel('Epoch')
     ax.set_ylabel(metric)
@@ -282,6 +304,8 @@ def plot_metric(db, *experiment_ids, metric='train_loss', ax=None):
     # add more granular ticks
     ax.grid(True)
     ax.legend()
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
 
 def plot_samples(db, *experiment_ids, metric='train_loss', ax=None):
     """

@@ -47,16 +47,16 @@ def parallelize(func, jobs, gpu_nodes, verbose=True, timeout=60*60*24):
         for worker in workers:
             if time.perf_counter() - worker.start_time > timeout:
                 if verbose:
-                    print(f'Job on cuda:{worker.node} in slot {worker.id} timed out. Killing it...')
+                    print(f'Job on cpu:{worker.node} in slot {worker.id} timed out. Killing it...')
                 worker.process.terminate()
             if not worker.process.is_alive():
                 worker.process.kill()
                 if verbose:
-                    print(f'Launching job on cuda:{worker.node} in slot {worker.id}. {len(jobs)} jobs to left...')
+                    print(f'Launching job on cpu:{worker.node} in slot {worker.id}. {len(jobs)} jobs to left...')
                 if len(jobs) == 0:
                     break
                 args = list(jobs.pop())
-                args.append(f'cuda:{worker.node}')
+                args.append(f'cpu:{worker.node}')
                 p = mp.Process(target=func, args=args)
                 p.start()
                 worker.process = p
@@ -135,7 +135,7 @@ def train(model, loader, optimizer, criterion, lr_scheduler=None, scaler=None, a
         if aug is not None:
             x = aug(x)
         optimizer.zero_grad()
-        # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        # with torch.cpu.amp.autocast(dtype=torch.bfloat16):
         y_hat = model(x)
         loss = criterion(y_hat, y)
         train_acc += (y_hat.argmax(-1) == y).float().sum().item()
@@ -456,7 +456,7 @@ class TensorDataset():
         return len(self.data)
 
 class GeneratorDatasetLoader():
-    def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cuda", use_cache=True, generator_grad=True, test=-1):
+    def __init__(self, anchors, labels, generator, config, weight_path, batch_size, shuffle=True, num_workers=0, device="cpu", use_cache=True, generator_grad=True, test=-1):
         if test != -1:
             labels = labels[:test]
             anchors = anchors[:test]
@@ -530,7 +530,7 @@ class GeneratorDatasetLoader():
                                         
     
 class TransformLoader():
-    def __init__(self, dataloader, transform, device="cuda"):
+    def __init__(self, dataloader, transform, device="cpu"):
         self.dataloader = dataloader
         self.transform = transform
         self.batch_size = dataloader.batch_size
@@ -551,7 +551,7 @@ class TransformLoader():
         return len(self.dataloader)
     
 class ImageLoader():
-    def __init__(self, dataloader, transform, device="cuda"):
+    def __init__(self, dataloader, transform, device="cpu"):
         self.dataloader = dataloader
         self.transform = transform
         self.batch_size = dataloader.batch_size
@@ -581,7 +581,7 @@ def load_anchors(data_path):
     config = data['config']
     return anchors, labels, generator, config
 
-def get_generator(anchors_path, weight_path, shuffle=True, num_workers=0, batch_size=64, device="cuda", use_cache=True, generator_grad=True):
+def get_generator(anchors_path, weight_path, shuffle=True, num_workers=0, batch_size=64, device="cpu", use_cache=True, generator_grad=True):
     anchors_data = load_anchors(anchors_path)
     return GeneratorDatasetLoader(*anchors_data, weight_path, shuffle=shuffle, num_workers=num_workers, batch_size=batch_size,  device=device, use_cache=use_cache, generator_grad=generator_grad)
 
